@@ -213,6 +213,10 @@ function getChildrenConnectionCount(responseSocket) {
 }
 
 function onCommand(socket, command) {
+    if (!socket.writable) {
+        socket.end();
+        return;
+    }
     //todo: we should use deferreds and chainloading instead of this
     socket._pendingResponses = 0;
     socket._onLastPendingResponse = function() {
@@ -264,6 +268,9 @@ function startSignalServer() {
         //once we get a FIN then we know the sending side is done sending data
         socket.on('end', function() {
             onCommand(socket, command);
+        });
+        socket.on('error', function(err) {
+            console.log('Error on command socket: ' + err.message);
         });
     });
     signalServer.listen(signalSocketFile, startPotluckServer);
