@@ -53,16 +53,22 @@ WriterHandler.prototype.restartWriters = function() {
     this.startWriters();
 };
 WriterHandler.prototype.setFormatters = function(formatters) {
-    var i, formatter;
+    var i, type, file, formatter;
     this.formatters = [];
     for (i = 0; i < formatters.length; i++) {
         if (typeof formatters[i] === 'string') {
-            formatter = new (reload('./formatters/' + formatters[i]))();
-            formatter.type = formatters[i];
+            if (formatters[i][0] !== '/') {
+                file = reload('./formatters/' + formatters[i]);
+            } else {
+                file = reload(formatters[i]);
+            }
+            type = formatters[i];
         } else {
-            formatter = new (reload('./formatters/' + formatters[i].type))(formatters[i]);
-            formatter.type = formatters[i].type;
+            file = reload('./formatters/' + formatters[i].type);
+            type = formatters[i].type;
         }
+        formatter = new file();
+        formatter.type = type;
         this.formatters.push(formatter);
     }
 };

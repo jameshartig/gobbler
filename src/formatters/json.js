@@ -1,11 +1,13 @@
-function JSONFilter() {}
-JSONFilter.prototype.format = function(msg, initalObj) {
+function JSONFormatter() {}
+JSONFormatter.prototype.format = function(msg, initalObj) {
     var message = msg,
         obj = initalObj || {};
     if (message instanceof Buffer) {
         message = message.toString();
     }
     obj.msg = message;
-    return JSON.stringify(obj);
+    message = JSON.stringify(obj);
+    obj.msg = undefined;
+    return message;
 };
-module.exports = JSONFilter;
+module.exports = JSONFormatter;
