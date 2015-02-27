@@ -1,7 +1,6 @@
 var util = require('util'),
     reload = require('require-reload')(require),
     EntryPool = require('entrypool'),
-    RingBuffer = require('ringbufferjs'),
     log = require('./log.js'),
     WriterHandler = reload('./writerHandler.js'),
     defaultLimits = {
@@ -13,8 +12,9 @@ var util = require('util'),
     messageOptions = {};
 
 function Child(oldChild) {
-    WriterHandler.call(this);
-    this.started = false;
+    WriterHandler.call(this, oldChild);
+    this.isParent = false;
+    this.isChild = true;
 
     if (oldChild !== undefined) {
         this.started = oldChild.started;
@@ -25,13 +25,9 @@ function Child(oldChild) {
         this.messagesPerIP = oldChild.messagesPerIP;
         this.maxConnectionsAllowed = oldChild.maxConnectionsAllowed;
         this.pool = oldChild.pool;
-        this.buffer = oldChild.buffer;
         this.formatters = oldChild.formatters;
         this.maxMessagesAllowed = oldChild.maxMessagesAllowed;
         this.maxMessagesTimeframe = oldChild.maxMessagesTimeframe;
-        if (oldChild.writer) {
-            this.replaceWriter();
-        }
         clearInterval(oldChild.gc);
         this.startGCInterval();
     } else {
@@ -40,10 +36,12 @@ function Child(oldChild) {
         this.connectionsPerIP = {};
         this.messagesPerIP = {};
         this.role = '';
-        this.buffer = new RingBuffer(100);
     }
 }
 util.inherits(Child, WriterHandler);
+Child.prototype.call = function(context, oldChild) {
+    Child.prototype.constructor.call(context, oldChild);
+};
 
 Child.prototype.start = function() {
     if (this.started) {
@@ -55,9 +53,7 @@ Child.prototype.start = function() {
     this.started = true;
     this.setupServerListeners();
     this.createPool();
-    if (this.config && this.config.writer) {
-        this.replaceWriter();
-    }
+    this.restartWriters();
 };
 Child.prototype.createPool = function(initialSize) {
     if (this.pool) {
@@ -100,6 +96,11 @@ Child.prototype.setMaxMessagesTimeframe = function(newValue) {
 };
 Child.prototype.setRole = function(role) {
     this.role = role;
+    if (role) {
+        messageOptions.role = role;
+    } else {
+        delete messageOptions.role;
+    }
     return true;
 };
 Child.prototype.flushTrackedConnections = function() {
@@ -164,27 +165,9 @@ Child.prototype.onClientMessage = function(message, socket) {
     }
     //remove any entries
     EntryPool.addEntry(this.messagesPerIP[ip], now);
-    this.writeAndSend(message, ip, now);
-};
-Child.prototype.writeAndSend = function(msg, ip, timestamp) {
-    var message = msg,
-        lastFormatter, i;
     messageOptions.ip = ip;
-    messageOptions.timestamp = timestamp;
-    if (this.formatters) {
-        try {
-            for (i = 0; i < this.formatters.length; i++) {
-                lastFormatter = this.formatters[i].type;
-                message = this.formatters[i].format(message, messageOptions);
-            }
-        } catch (e) {
-            log('Error formatting message from', lastFormatter, ':', e.message);
-            return false;
-        }
-    }
-    if (!this.writer || !this.writer.write(message)) {
-        this.buffer.enq(message);
-    }
+    messageOptions.timestamp = now;
+    this.writeMessage(message, messageOptions);
 };
 Child.prototype.runGC = function() {
     var cleanupIfBefore = Date.now() - this.maxMessagesTimeframe;
@@ -219,50 +202,6 @@ Child.prototype.reportConnectionCount = function() {
         process.send('e' + count);
     });
 };
-Child.prototype.setupWriterListeners = function() {
-    this.writer.removeAllListeners('connect').on('connect', this.onWriterDrain.bind(this));
-    this.writer.removeAllListeners('drain').on('drain', this.onWriterDrain.bind(this));
-    this.writer.removeAllListeners('disconnect').on('disconnect', this.onWriterDisconnect.bind(this));
-    this.writer.removeAllListeners('error').on('error', this.onWriterError.bind(this));
-};
-Child.prototype.onWriterDrain = function() {
-    while (!this.buffer.isEmpty()) {
-        if (!this.writer.write(this.buffer.deq())) {
-            break;
-        }
-    }
-};
-Child.prototype.onWriterDisconnect = function() {
-    if (this.pendingWriterConnect) {
-        clearTimeout(this.pendingWriterConnect);
-    }
-    this.writer.stop();
-    //wait 5 seconds before trying to reconnect
-    this.pendingWriterConnect = setTimeout(this.writerStart.bind(this), 5000);
-};
-Child.prototype.onWriterError = function(err) {
-    log('Writer error in child ' + err.message);
-};
-Child.prototype.writerStart = function() {
-    if (!this.writer) {
-        throw new Error("No writer to start in Child.writerStart");
-    }
-    this.setupWriterListeners();
-    this.writer.start((this instanceof Child));
-};
-Child.prototype.replaceWriter = function() {
-    if (this.writer) {
-        this.writer.removeAllListeners();
-        if (this.pendingWriterConnect) {
-            clearTimeout(this.pendingWriterConnect);
-            this.pendingWriterConnect = 0;
-        }
-        this.writer.stop();
-    }
-    this.writer = new (reload('./writers/' + this.config.writer.type))(this.writer);
-    this.writer.setConfig(this.config.writer);
-    this.writerStart();
-};
 Child.prototype.setConfig = function(config) {
     if (!config) {
         throw new TypeError('Invalid config passed to Child.setConfig');
@@ -272,25 +211,20 @@ Child.prototype.setConfig = function(config) {
     if (this.role !== config.role) {
         this.setRole(config.role);
     }
-    if (config.writer && this.started) {
-        this.replaceWriter();
+    if (config.writers) {
+        if (!Array.isArray(config.writers)) {
+            throw new TypeError('Invalid config.writers passed to Child.setConfig');
+        }
+        this.setWriters(config.writers);
+        if (this.started) {
+            this.restartWriters();
+        }
     }
     if (config.formatters) {
         if (!Array.isArray(config.formatters)) {
             throw new TypeError('Invalid config.formatters passed to Child.setConfig');
         }
-        formatters = [];
-        config.formatters.forEach(function(formatter) {
-            if (typeof formatter === 'string') {
-                f = new (reload('./formatters/' + formatter))();
-                f.type = formatter;
-            } else {
-                f = new (reload('./formatters/' + formatter.type))(formatter);
-                f.type = formatter.type;
-            }
-            formatters.push(f);
-        });
-        this.formatters = formatters;
+        this.setFormatters(config.formatters);
     }
 
     if (!config.limits) {
@@ -315,7 +249,9 @@ Child.prototype.handleParentMessage = function(message, handle) {
     var config;
     switch (message[0]) {
         case 'a': //response to ping with the server handle
-            config = JSON.parse(message.substr(1));
+            config = message.substr(1);
+            log('Child received config', config);
+            config = JSON.parse(config);
             this.setConfig(config);
             this.onServerHandle(handle);
             this.start();
@@ -325,7 +261,9 @@ Child.prototype.handleParentMessage = function(message, handle) {
             break;
         case 'f': //new config!
             try {
-                config = JSON.parse(message.substr(1));
+                config = message.substr(1);
+                log('Child received config', config);
+                config = JSON.parse(config);
                 this.setConfig(config);
                 process.send('fok');
             } catch (e) {

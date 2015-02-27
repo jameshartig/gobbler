@@ -14,7 +14,6 @@ process.on('SIGINT', function() {
     process.exit();
 });
 process.on('SIGHUP', function() {
-    console.log('heyyyyy');
     var status = 'unknown';
     try {
         Child = reload('./src/child.js');

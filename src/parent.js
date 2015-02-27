@@ -27,10 +27,15 @@ function cleanupListeners(pendingListeners, inMS) {
 
 function Parent() {
     WriterHandler.call(this);
-    this.started = false;
+    this.isParent = true;
+    this.isChild = false;
     this.childrenByID = {};
 }
 util.inherits(Parent, WriterHandler);
+Parent.prototype.call = function(context) {
+    Parent.prototype.constructor.call(context);
+};
+
 Parent.prototype.parseFlags = function() {
     var f = flags;
     f.defineString('ip', '0.0.0.0', 'ip address to listen on');
@@ -61,6 +66,12 @@ Parent.prototype.loadConfig = function() {
             this.config[name] = this.flags.get(name);
         }
     }
+    if (!this.config.writers && this.config.writer) {
+        this.config.writers = [this.config.writer];
+    }
+    if (!this.config.formatters && this.config.formatter) {
+        this.config.formatters = [this.config.formatter];
+    }
     if (this.config.children < 1) {
         throw new Error('Invalid number of children');
     }
@@ -69,7 +80,7 @@ Parent.prototype.loadConfig = function() {
 Parent.prototype.spawnChild = function(responseSocket) {
     var now = Date.now(),
         child;
-    if (EntryPool.cleanupEntries(this.crashedTimes, (now - 5000)) >= this.config.children) {
+    if (EntryPool.cleanupEntries(this.crashedTimes, (now - 5000)) >= Math.max(3, this.config.children)) {
         log('Children are crashing too quickly. Dying...');
         process.exit();
         return;
@@ -108,7 +119,7 @@ Parent.prototype.onChildMessage = function(child, responseSocket, waitingMessage
             if (status === 'ok') {
                 response = 'Child ' + id + ' has been reloaded!';
             } else {
-                response = 'Child ' + id + 'failed to reload. Error: ' + status;
+                response = 'Child ' + id + ' failed to reload. Error: ' + status;
             }
             break;
         case 'd': //child shutdown
@@ -172,8 +183,9 @@ Parent.prototype.eachChild = function(cb, responseSocket, waitingMessage) {
     cleanupListeners(pendingListeners);
 };
 Parent.prototype.stopChildren = function(responseSocket) {
+    var _this = this;
     this.eachChild(function(child) {
-        delete this.childrenByID[child._id];
+        delete _this.childrenByID[child._id];
         child.kill('SIGINT');
     }, responseSocket, 'd');
 };

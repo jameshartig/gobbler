@@ -1,63 +1,101 @@
 var events = require('events'),
     util = require('util'),
     reload = require('require-reload')(require),
-    log = require('./log.js'),
-    //don't use reload here since we actually the cached version for instanceof to work
-    Child = require('./Child.js');
+    log = require('./log.js');
 
-function WriterHandler() {
+function WriterHandler(oldHandler) {
     events.EventEmitter.call(this);
+    if (oldHandler !== undefined) {
+        this.writers = oldHandler.writers;
+        this.formatters = oldHandler.formatters;
+        this.restartWriters();
+    } else {
+        this.writers = [];
+        this.formatters = [];
+    }
 }
 util.inherits(WriterHandler, events.EventEmitter);
+WriterHandler.prototype.call = function(context, oldHandler) {
+    WriterHandler.prototype.constructor.call(context, oldHandler);
+};
 
-WriterHandler.prototype.setupWriterListeners = function() {
-    this.writer.removeAllListeners('connect').on('connect', this.onWriterDrain.bind(this));
-    this.writer.removeAllListeners('drain').on('drain', this.onWriterDrain.bind(this));
-    this.writer.removeAllListeners('disconnect').on('disconnect', this.onWriterDisconnect.bind(this));
-    this.writer.removeAllListeners('error').on('error', this.onWriterError.bind(this));
+WriterHandler.prototype.setupWriterListeners = function(writer) {
+    writer.removeAllListeners('start').on('start', this.onWriterStart.bind(this, writer));
+    writer.removeAllListeners('error').on('error', this.onWriterError.bind(this, writer));
 };
-WriterHandler.prototype.onWriterDrain = function() {
-    while (!this.buffer.isEmpty()) {
-        if (!this.writer.write(this.buffer.deq())) {
-            break;
+WriterHandler.prototype.onWriterStart = function(writer) {
+    log('Started tcp socket writer', writer.logName);
+};
+WriterHandler.prototype.onWriterError = function(writer, error) {
+    log('Error on tcp socket writer', writer.logName, ':', error.message);
+};
+WriterHandler.prototype.stopWriters = function() {
+    for (var i = 0; i < this.writers.length; i++) {
+        this.writers[i].stop();
+        this.writers[i].removeAllListeners();
+    }
+};
+WriterHandler.prototype.startWriters = function() {
+    for (var i = 0; i < this.writers.length; i++) {
+        this.setupWriterListeners(this.writers[i]);
+        this.writers[i].start(this);
+    }
+};
+WriterHandler.prototype.restartWriters = function() {
+    var i, writer, config;
+    this.stopWriters();
+    for (i = 0; i < this.writers.length; i++) {
+        config = this.writers[i].config;
+        writer = new (reload('./writers/' + config.type))();
+        writer.config = config;
+        writer.setConfig(config);
+    }
+    this.startWriters();
+};
+WriterHandler.prototype.setFormatters = function(formatters) {
+    var i, formatter;
+    this.formatters = [];
+    for (i = 0; i < formatters.length; i++) {
+        if (typeof formatters[i] === 'string') {
+            formatter = new (reload('./formatters/' + formatters[i]))();
+            formatter.type = formatters[i];
+        } else {
+            formatter = new (reload('./formatters/' + formatters[i].type))(formatters[i]);
+            formatter.type = formatters[i].type;
+        }
+        this.formatters.push(formatter);
+    }
+};
+//does NOT start the writers
+WriterHandler.prototype.setWriters = function(writers) {
+    var i, writer;
+    this.stopWriters();
+    this.writers = [];
+    for (i = 0; i < writers.length; i++) {
+        writer = new (reload('./writers/' + writers[i].type))();
+        writer.config = writers[i];
+        writer.setConfig(writers[i]);
+        this.writers.push(writer);
+    }
+};
+WriterHandler.prototype.writeMessage = function(msg, options) {
+    var message = msg,
+        lastFormatter = '?',
+        i;
+    if (this.formatters) {
+        try {
+            for (i = 0; i < this.formatters.length; i++) {
+                lastFormatter = this.formatters[i].type;
+                message = this.formatters[i].format(message, options);
+            }
+        } catch (e) {
+            log('Error formatting message from', lastFormatter, ':', e.message);
+            return;
         }
     }
-};
-WriterHandler.prototype.onWriterDisconnect = function() {
-    if (this.pendingWriterConnect) {
-        clearTimeout(this.pendingWriterConnect);
+    for (i = 0; i < this.writers.length; i++) {
+        this.writers[i].write(message);
     }
-    this.writer.stop();
-    //wait 5 seconds before trying to reconnect
-    this.pendingWriterConnect = setTimeout(this.writerStart.bind(this), 5000);
-};
-WriterHandler.prototype.onWriterError = function(err) {
-    log('Writer error in child ' + err.message);
-};
-WriterHandler.prototype.writerStart = function() {
-    if (!this.writer) {
-        throw new Error("No writer to start in WriterHandler.writerStart");
-    }
-    this.setupWriterListeners();
-    this.writer.start((this instanceof Child));
-};
-WriterHandler.prototype.replaceWriter = function() {
-    if (this instanceof Child) {
-        log('Creating new writer from child');
-    } else {
-        log('Creating new writer from parent');
-    }
-    if (this.writer) {
-        this.writer.removeAllListeners();
-        if (this.pendingWriterConnect) {
-            clearTimeout(this.pendingWriterConnect);
-            this.pendingWriterConnect = 0;
-        }
-        this.writer.stop();
-    }
-    this.writer = new (reload('./writers/' + this.config.writer.type))(this.writer);
-    this.writer.setConfig(this.config.writer);
-    this.writerStart();
 };
 
 module.exports = WriterHandler;
