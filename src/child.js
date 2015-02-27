@@ -3,11 +3,18 @@ var events = require('events'),
     reload = require('require-reload')(require),
     EntryPool = require('entrypool'),
     RingBuffer = require('ringbufferjs'),
+    dateFormat = require('dateFormat'),
     maxConnectionsAllowed = 3, //max concurrent connections per IP
     maxMessagesAllowed = 5, //max messages allowed per timeframe
     maxMessagesTimeframe = 60 * 1000,
     idleTimeout = 5 * 1000,
     messageOptions = {};
+
+function log() {
+    var args = Array.prototype.slice.call(arguments);
+    args.unshift(dateFormat(new Date(), "[d-mmm-yy HH:MM:ss]"));
+    console.log.apply(console.log, args);
+}
 
 function Child(oldChild) {
     events.EventEmitter.call(this);
@@ -25,15 +32,15 @@ function Child(oldChild) {
         this.buffer = oldChild.buffer;
         this.formatters = oldChild.formatters;
         if (!this.setMaxConnectionsAllowed(maxConnectionsAllowed)) {
-            console.log('Failed to set new maxConnectionsAllowed!', this.maxConnectionsAllowed, maxConnectionsAllowed);
+            log('Failed to set new maxConnectionsAllowed!', this.maxConnectionsAllowed, maxConnectionsAllowed);
         }
         this.maxMessagesAllowed = oldChild.maxMessagesAllowed;
         if (!this.setMaxMessagesAllowed(maxMessagesAllowed)) {
-            console.log('Failed to set new maxMessagesAllowed!', this.maxMessagesAllowed, maxMessagesAllowed);
+            log('Failed to set new maxMessagesAllowed!', this.maxMessagesAllowed, maxMessagesAllowed);
         }
         this.maxMessagesTimeframe = oldChild.maxMessagesTimeframe;
         if (!this.setMaxMessagesTimeframe(maxMessagesTimeframe)) {
-            console.log('Failed to set new maxMessagesTimeframe!', this.maxMessagesTimeframe, maxMessagesTimeframe);
+            log('Failed to set new maxMessagesTimeframe!', this.maxMessagesTimeframe, maxMessagesTimeframe);
         }
         if (oldChild.writer) {
             this.replaceWriter();
@@ -158,7 +165,7 @@ Child.prototype.onClientMessage = function(message, socket) {
         this.messagesPerIP[ip] = this.pool.get();
     }
     if (EntryPool.numEntries(this.messagesPerIP[ip]) >= this.maxMessagesAllowed) {
-        console.log('dropping message from', ip);
+        log('dropping message from', ip);
         return;
     }
     //remove any entries
@@ -177,7 +184,7 @@ Child.prototype.writeAndSend = function(msg, ip, timestamp) {
                 message = this.formatters[i].format(message, messageOptions);
             }
         } catch (e) {
-            console.log('Error formatting message from', lastFormatter, ':', e.message);
+            log('Error formatting message from', lastFormatter, ':', e.message);
             return false;
         }
     }
@@ -197,7 +204,7 @@ Child.prototype.runGC = function() {
 Child.prototype.onServerHandle = function(handle) {
     var server = this.server;
     if (server.listening) {
-        console.log('Cannot set the handle again for a server');
+        log('Cannot set the handle again for a server');
         return;
     }
     server.listen(handle, function() {
@@ -240,7 +247,7 @@ Child.prototype.onWriterDisconnect = function() {
     this.pendingWriterConnect = setTimeout(this.writerStart.bind(this), 5000);
 };
 Child.prototype.onWriterError = function(err) {
-    console.log('Writer error in child ' + err.message);
+    log('Writer error in child ' + err.message);
 };
 Child.prototype.writerStart = function() {
     if (!this.writer) {

@@ -1,7 +1,14 @@
 var posix = require('posix'),
+    dateFormat = require('dateFormat'),
     reload = require('require-reload')(require),
     Child = reload('./src/child.js'),
     currentChild = new Child();
+
+function log() {
+    var args = Array.prototype.slice.call(arguments);
+    args.unshift(dateFormat(new Date(), "[d-mmm-yy HH:MM:ss]"));
+    console.log.apply(console.log, args);
+}
 
 process.on('message', currentChild.handleParentMessage.bind(currentChild));
 process.on('SIGINT', function() {
@@ -29,7 +36,7 @@ setInterval(function() {
     var parentPID = posix.getppid();
     //technically ppid of 1 means parent died but if we get 0 that's bad too?
     if (!parentPID || parentPID === 1) {
-        console.log('parent died');
+        log('parent died');
         process.exit();
     }
 }, 1000);

@@ -3,12 +3,19 @@ var net = require('net'),
     child_process = require('child-process-debug'),
     EntryPool = require('entrypool'),
     flags = require('flags'),
+    dateFormat = require('dateFormat'),
     reload = require('require-reload')(require),
     numCPUs = require('os').cpus().length,
     isWindows = /^win/.test(process.platform),
     command = (process.argv.slice(2)).slice(-1)[0], //get the last arg sent as long as its not the filename
     childrenByID = {},
     config, serverHandle, crashedTimes, signalServer, signalConn;
+
+function log() {
+    var args = Array.prototype.slice.call(arguments);
+    args.unshift(dateFormat(new Date(), "[d-mmm-yy HH:MM:ss]"));
+    console.log.apply(console.log, args);
+}
 
 if (flags.isSet === undefined) {
     flags.isSet = function(name) {
@@ -114,7 +121,7 @@ function onChildMessage(responseSocket, message) {
     if (!response) {
         return;
     }
-    responseSocket.write(response + "\n");
+    responseSocket.write(dateFormat(new Date(), "[d-mmm-yy HH:MM:ss] ") + response + "\n");
     if (responseSocket._pendingResponses !== undefined) {
         responseSocket._pendingResponses--;
         if (responseSocket._pendingResponses === 0) {
@@ -127,7 +134,7 @@ function onChildDisconnect() {
     this.removeAllListeners();
 
     if (childrenByID[this._id]) {
-        console.log('Child ' + this._id + ' disconnected. Restarting...');
+        log('Child ' + this._id + ' disconnected. Restarting...');
         try {
             childrenByID[this._id].kill('SIGINT');
         } catch (e) {}
@@ -142,7 +149,7 @@ function startChild(responseSocket) {
         pendingListners = [],
         listener, child;
     if (EntryPool.cleanupEntries(crashedTimes, (now - 5000)) >= config.children) {
-        console.log('Children are crashing too quickly. Dying...');
+        log('Children are crashing too quickly. Dying...');
         process.exit();
         return;
     }
@@ -318,7 +325,7 @@ function onCommand(socket, command) {
 function startPotluckServer() {
     serverHandle = net._createServerHandle(config.ip, config.port, 4);
     if (!(serverHandle instanceof process.binding('tcp_wrap').TCP)) {
-        console.log('Created invalid server handle! Maybe you can\'t listen on that port?');
+        log('Created invalid server handle! Maybe you can\'t listen on that port?');
         process.exit();
     }
     //now actually start the initial children
@@ -338,7 +345,7 @@ function startSignalServer() {
             onCommand(socket, command);
         });
         socket.on('error', function(err) {
-            console.log('Error on command socket: ' + err.message);
+            log('Error on command socket: ' + err.message);
         });
     });
     signalServer.listen(config.commsock, startPotluckServer);
