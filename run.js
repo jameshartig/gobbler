@@ -17,13 +17,6 @@ function log() {
     console.log.apply(console.log, args);
 }
 
-if (flags.isSet === undefined) {
-    flags.isSet = function(name) {
-        if (!flags.FLAGS[name]) throw Error('Unknown flag "' + name + '"');
-        return flags.FLAGS[name].isSet;
-    };
-}
-
 //if the last thing they sent was an option its not a command
 if (typeof command !== 'string' || command.indexOf('-') === 0) {
     command = '';
