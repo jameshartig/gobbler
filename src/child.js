@@ -1,23 +1,19 @@
-var events = require('events'),
-    util = require('util'),
+var util = require('util'),
     reload = require('require-reload')(require),
     EntryPool = require('entrypool'),
     RingBuffer = require('ringbufferjs'),
-    dateFormat = require('dateFormat'),
-    maxConnectionsAllowed = 3, //max concurrent connections per IP
-    maxMessagesAllowed = 5, //max messages allowed per timeframe
-    maxMessagesTimeframe = 60 * 1000,
+    log = require('./log.js'),
+    WriterHandler = reload('./writerHandler.js'),
+    defaultLimits = {
+        persistantConns: 10,
+        messages: 100,
+        messagesTimeframe: 60
+    },
     idleTimeout = 5 * 1000,
     messageOptions = {};
 
-function log() {
-    var args = Array.prototype.slice.call(arguments);
-    args.unshift(dateFormat(new Date(), "[d-mmm-yy HH:MM:ss]"));
-    console.log.apply(console.log, args);
-}
-
 function Child(oldChild) {
-    events.EventEmitter.call(this);
+    WriterHandler.call(this);
     this.started = false;
 
     if (oldChild !== undefined) {
@@ -31,47 +27,45 @@ function Child(oldChild) {
         this.pool = oldChild.pool;
         this.buffer = oldChild.buffer;
         this.formatters = oldChild.formatters;
-        if (!this.setMaxConnectionsAllowed(maxConnectionsAllowed)) {
-            log('Failed to set new maxConnectionsAllowed!', this.maxConnectionsAllowed, maxConnectionsAllowed);
-        }
         this.maxMessagesAllowed = oldChild.maxMessagesAllowed;
-        if (!this.setMaxMessagesAllowed(maxMessagesAllowed)) {
-            log('Failed to set new maxMessagesAllowed!', this.maxMessagesAllowed, maxMessagesAllowed);
-        }
         this.maxMessagesTimeframe = oldChild.maxMessagesTimeframe;
-        if (!this.setMaxMessagesTimeframe(maxMessagesTimeframe)) {
-            log('Failed to set new maxMessagesTimeframe!', this.maxMessagesTimeframe, maxMessagesTimeframe);
-        }
         if (oldChild.writer) {
             this.replaceWriter();
         }
         clearInterval(oldChild.gc);
         this.startGCInterval();
+    } else {
+        this.server = new (reload('portluck')).Server();
+        this.server.timeout = idleTimeout;
+        this.connectionsPerIP = {};
+        this.messagesPerIP = {};
+        this.role = '';
+        this.buffer = new RingBuffer(100);
     }
 }
-util.inherits(Child, events.EventEmitter);
+util.inherits(Child, WriterHandler);
 
 Child.prototype.start = function() {
     if (this.started) {
         return;
     }
-    var portluck = reload('portluck');
-    this.server = new portluck.Server();
-    this.server.timeout = idleTimeout;
-    this.setupServerListeners();
-    this.connectionsPerIP = {};
-    this.messagesPerIP = {};
-    this.maxConnectionsAllowed = maxConnectionsAllowed;
-    this.maxMessagesAllowed = maxMessagesAllowed;
-    this.maxMessagesTimeframe = maxMessagesTimeframe;
-    this.pool = new EntryPool(500, Math.max(this.maxConnectionsAllowed, this.maxMessagesAllowed));
-    this.role = '';
+    if (!this.config) {
+        throw new Error('Cannot start child without a config');
+    }
     this.started = true;
-    this.buffer = new RingBuffer(100);
-    this.startGCInterval();
+    this.setupServerListeners();
+    this.createPool();
     if (this.config && this.config.writer) {
         this.replaceWriter();
     }
+};
+Child.prototype.createPool = function(initialSize) {
+    if (this.pool) {
+        return;
+    }
+    var size = initialSize || 500;
+    this.pool = new EntryPool(size, Math.max(this.maxConnectionsAllowed, this.maxMessagesAllowed));
+    this.startGCInterval();
 };
 Child.prototype.startGCInterval = function() {
     if (this.gc) {
@@ -253,9 +247,8 @@ Child.prototype.writerStart = function() {
     if (!this.writer) {
         throw new Error("No writer to start in Child.writerStart");
     }
-    //true since we're a child
     this.setupWriterListeners();
-    this.writer.start(true);
+    this.writer.start((this instanceof Child));
 };
 Child.prototype.replaceWriter = function() {
     if (this.writer) {
@@ -274,7 +267,7 @@ Child.prototype.setConfig = function(config) {
     if (!config) {
         throw new TypeError('Invalid config passed to Child.setConfig');
     }
-    var formatters, f;
+    var formatters, f, name;
     this.config = config;
     if (this.role !== config.role) {
         this.setRole(config.role);
@@ -299,6 +292,24 @@ Child.prototype.setConfig = function(config) {
         });
         this.formatters = formatters;
     }
+
+    if (!config.limits) {
+        config.limits = {};
+    }
+    for (name in defaultLimits) {
+        if (defaultLimits.hasOwnProperty(name) && !config.limits[name]) {
+            config.limits[name] = defaultLimits[name];
+        }
+    }
+    if (!this.setMaxConnectionsAllowed(config.limits.persistantConns)) {
+        throw new Error('Cannot set limit of persistantConns. ' + config.limits.persistantConns + ' is either higher than the current value or less than 1');
+    }
+    if (!this.setMaxMessagesAllowed(config.limits.messages)) {
+        throw new Error('Cannot set limit of messages. ' + config.limits.messages + ' is either higher than the current value or less than 1');
+    }
+    if (!this.setMaxMessagesTimeframe(config.limits.messagesTimeframe)) {
+        throw new Error('Cannot set limit of messagesTimeframe. ' + config.limits.messagesTimeframe + ' is either higher than the current value or less than 1');
+    }
 };
 Child.prototype.handleParentMessage = function(message, handle) {
     var config;
@@ -307,6 +318,7 @@ Child.prototype.handleParentMessage = function(message, handle) {
             config = JSON.parse(message.substr(1));
             this.setConfig(config);
             this.onServerHandle(handle);
+            this.start();
             break;
         case 'e': //asking for our connection count
             this.reportConnectionCount();

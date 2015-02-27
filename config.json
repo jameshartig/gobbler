@@ -9,5 +9,10 @@
     {"type": "charLimit", "limit": 1024},
     "json",
     "trailingNewLine"
-  ]
+  ],
+  "limits": {
+    "persistantConns": 5,
+    "messages": 100,
+    "messagesTimeframe": 60
+  }
 }

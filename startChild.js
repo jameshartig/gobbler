@@ -1,16 +1,12 @@
 var posix = require('posix'),
-    dateFormat = require('dateFormat'),
+    log = require('./src/log.js'),
     reload = require('require-reload')(require),
     Child = reload('./src/child.js'),
     currentChild = new Child();
 
-function log() {
-    var args = Array.prototype.slice.call(arguments);
-    args.unshift(dateFormat(new Date(), "[d-mmm-yy HH:MM:ss]"));
-    console.log.apply(console.log, args);
-}
-
-process.on('message', currentChild.handleParentMessage.bind(currentChild));
+process.on('message', function(msg, handle) {
+    currentChild.handleParentMessage(msg, handle);
+});
 process.on('SIGINT', function() {
     if (process.connected) {
         process.send('d');
@@ -18,11 +14,11 @@ process.on('SIGINT', function() {
     process.exit();
 });
 process.on('SIGHUP', function() {
+    console.log('heyyyyy');
     var status = 'unknown';
     try {
         Child = reload('./src/child.js');
         currentChild = new Child(currentChild);
-        process.removeAllListeners('message').on('message', currentChild.handleParentMessage.bind(currentChild));
         currentChild.start();
         status = 'ok';
     } catch (e) {
@@ -40,9 +36,6 @@ setInterval(function() {
         process.exit();
     }
 }, 1000);
-
-//todo: we might need to wait to do this until after we get the config from 'a'
-currentChild.start();
 
 //tell the parent we're started
 process.send('a');
