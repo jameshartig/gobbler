@@ -1,6 +1,6 @@
 {
   "name": "gobbler",
-  "version": "0.0.1-alpha.0",
+  "version": "0.0.1-beta.0",
   "description": "Simple server that listens for data and forwards it somewhere",
   "main": "run.js",
   "repository": {
@@ -13,7 +13,8 @@
     "flags": "^0.1.2",
     "portluck": "alpha",
     "posix": "^2.0.0",
-    "require-reload": "^0.2.2"
+    "require-reload": "^0.2.2",
+    "ringbufferjs": "~0"
   },
   "keywords": [
     "gobbler",

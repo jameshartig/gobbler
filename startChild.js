@@ -16,14 +16,13 @@ process.on('SIGHUP', function() {
         Child = reload('./src/child.js');
         currentChild = new Child(currentChild);
         process.removeAllListeners('message').on('message', currentChild.handleParentMessage.bind(currentChild));
+        currentChild.start();
         status = 'ok';
     } catch (e) {
         status = e.message;
     }
     process.send('c' + status);
 });
-
-currentChild.start();
 
 //detect if the parent was kill9'd
 setInterval(function() {
@@ -34,6 +33,9 @@ setInterval(function() {
         process.exit();
     }
 }, 1000);
+
+//todo: we might need to wait to do this until after we get the config from 'a'
+currentChild.start();
 
 //tell the parent we're started
 process.send('a');

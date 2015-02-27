@@ -3,12 +3,19 @@ var net = require('net'),
     child_process = require('child-process-debug'),
     EntryPool = require('entrypool'),
     flags = require('flags'),
+    reload = require('require-reload')(require),
     numCPUs = require('os').cpus().length,
     isWindows = /^win/.test(process.platform),
-    signalSocketFile = isWindows ? '' : './comm.sock',
     command = (process.argv.slice(2)).slice(-1)[0], //get the last arg sent as long as its not the filename
     childrenByID = {},
-    serverHandle, numChildren, crashedTimes, signalServer, signalConn;
+    config, serverHandle, crashedTimes, signalServer, signalConn;
+
+if (flags.isSet === undefined) {
+    flags.isSet = function(name) {
+        if (!flags.FLAGS[name]) throw Error('Unknown flag "' + name + '"');
+        return flags.FLAGS[name].isSet;
+    };
+}
 
 //if the last thing they sent was an option its not a command
 if (typeof command !== 'string' || command.indexOf('-') === 0) {
@@ -21,14 +28,31 @@ if (typeof command !== 'string' || command.indexOf('-') === 0) {
 flags.defineString('ip', '0.0.0.0', 'ip address to listen on');
 flags.defineInteger('port', 80, 'port to listen on');
 flags.defineInteger('children', numCPUs, 'number of children to start');
-flags.defineString('commsock', signalSocketFile, 'unix socket to listen to for reloading/restarting');
+flags.defineString('role', '', 'the name of this gobbler instance');
+flags.defineString('commsock', isWindows ? '' : './comm.sock', 'unix socket to listen to for reloading/restarting');
+flags.defineString('config', './config.json', 'config file to load');
 //ignore unknown arguments
 flags.parse(null, true);
 
-signalSocketFile = flags.get('commsock');
+
+function loadConfig() {
+    config = {};
+    if (flags.get('config') && fs.existsSync(flags.get('config'))) {
+        config = reload(flags.get('config'));
+    }
+
+    //overwrite any values in config with ones passed in
+    for (var name in flags.FLAGS) {
+        if (flags.FLAGS.hasOwnProperty(name) && (config[name] === undefined || flags.isSet(name))) {
+            config[name] = flags.get(name);
+        }
+    }
+}
+loadConfig();
+
 if (command && command !== 'start') {
     command = (command + '').trim();
-    signalConn = net.createConnection({path: signalSocketFile}, function() {
+    signalConn = net.createConnection({path: config.commsock}, function() {
         signalConn.end(command);
     });
     signalConn.setTimeout(5000, function() {
@@ -46,18 +70,17 @@ if (command && command !== 'start') {
 }
 
 //they didn't send a signalCommand so lets start up the server
-numChildren = flags.get('children');
-if (numChildren < 1) {
+if (config.children < 1) {
     throw new Error('Invalid number of children');
 }
-crashedTimes = new Array(numChildren);
+crashedTimes = new Array(config.children);
 
 function onChildMessage(responseSocket, message) {
     var status, response;
     switch (message[0]) {
         case 'a': //initial ping which means i'm ready
             if (!this._ready) {
-                this.send('a', serverHandle);
+                this.send('a' + JSON.stringify(config), serverHandle);
                 this._ready = true;
             }
             break;
@@ -79,6 +102,14 @@ function onChildMessage(responseSocket, message) {
         case 'e': //connection count
             response = 'Child ' + this._id + ' connection count: ' + message.substr(1);
             break;
+        case 'f': //response from new config
+            status = message.substr(1);
+            if (status === 'ok') {
+                response = 'Child ' + this._id + ' reloaded config!';
+            } else {
+                response = 'Child ' + this._id + ' failed to reload config:' + status;
+            }
+            break;
     }
     if (!response) {
         return;
@@ -97,6 +128,9 @@ function onChildDisconnect() {
 
     if (childrenByID[this._id]) {
         console.log('Child ' + this._id + ' disconnected. Restarting...');
+        try {
+            childrenByID[this._id].kill('SIGINT');
+        } catch (e) {}
         delete childrenByID[this._id];
         EntryPool.addEntry(crashedTimes, Date.now());
         startChild();
@@ -107,7 +141,7 @@ function startChild(responseSocket) {
     var now = Date.now(),
         pendingListners = [],
         listener, child;
-    if (EntryPool.cleanupEntries(crashedTimes, (now - 5000)) >= numChildren) {
+    if (EntryPool.cleanupEntries(crashedTimes, (now - 5000)) >= config.children) {
         console.log('Children are crashing too quickly. Dying...');
         process.exit();
         return;
@@ -161,7 +195,7 @@ function stopChildren(responseSocket) {
 
 function restartChildren(responseSocket) {
     stopChildren(responseSocket);
-    for (var i = 0; i < numChildren; i++) {
+    for (var i = 0; i < config.children; i++) {
         startChild(responseSocket);
     }
 }
@@ -212,6 +246,29 @@ function getChildrenConnectionCount(responseSocket) {
     }
 }
 
+function sendNewConfig(responseSocket) {
+    var pendingListners = [],
+        listener, child;
+    for (var id in childrenByID) {
+        child = childrenByID[id];
+        if (responseSocket) {
+            responseSocket._pendingResponses++;
+            listener = [child, 'message', onChildMessage.bind(child, responseSocket)];
+            pendingListners.push(listener);
+            Function.prototype.call.apply(child.once, listener);
+        }
+        child.send('f' + JSON.stringify(config));
+    }
+    if (pendingListners.length) {
+        //remove the listeners if they happen to not have fired
+        setTimeout(function() {
+            pendingListners.forEach(function(listener) {
+                Function.prototype.call.apply(listener[0].removeListener, listener);
+            });
+        }, 5000);
+    }
+}
+
 function onCommand(socket, command) {
     if (!socket.writable) {
         socket.end();
@@ -229,7 +286,18 @@ function onCommand(socket, command) {
         case 'restart':
             restartChildren(socket);
             break;
+        case 'reloadconfig':
+            try {
+                loadConfig();
+                sendNewConfig(socket);
+            } catch (e) {
+                socket.end('Failed to load new config: ' + e.message);
+            }
+            break;
         case 'status':
+            if (config.role) {
+                socket.write('Role: ' + config.role + "\n");
+            }
             socket.write('Number of children: ' + (Object.keys(childrenByID)).length + "\n");
             getChildrenConnectionCount(socket);
             break;
@@ -248,7 +316,7 @@ function onCommand(socket, command) {
 }
 
 function startPotluckServer() {
-    serverHandle = net._createServerHandle(flags.get('ip'), flags.get('port'), 4);
+    serverHandle = net._createServerHandle(config.ip, config.port, 4);
     if (!(serverHandle instanceof process.binding('tcp_wrap').TCP)) {
         console.log('Created invalid server handle! Maybe you can\'t listen on that port?');
         process.exit();
@@ -273,7 +341,7 @@ function startSignalServer() {
             console.log('Error on command socket: ' + err.message);
         });
     });
-    signalServer.listen(signalSocketFile, startPotluckServer);
+    signalServer.listen(config.commsock, startPotluckServer);
     //don't let this server stop us from dying
     signalServer.unref();
 
@@ -285,14 +353,14 @@ function startSignalServer() {
     });
 }
 
-if (signalSocketFile) {
+if (config.commsock) {
     //if the file already exists we might already be running somewhere else
-    fs.exists(signalSocketFile, function(exists) {
+    fs.exists(config.commsock, function(exists) {
         if (!exists) {
             startSignalServer();
             return;
         }
-        var conn = net.createConnection({path: signalSocketFile}, function() {
+        var conn = net.createConnection({path: config.commsock}, function() {
             process.stdout.write("An instance of gobbler is already running!\n");
             conn.end();
             process.exit();
@@ -300,11 +368,11 @@ if (signalSocketFile) {
         conn.setTimeout(5000, function() {
             signalConn.destroy();
             process.stdout.write("Command socket already exists but node is dead.\n");
-            fs.unlink(signalSocketFile, startSignalServer);
+            fs.unlink(config.commsock, startSignalServer);
         });
         conn.on('error', function() {
             process.stdout.write("Command socket already exists but node is dead.\n");
-            fs.unlink(signalSocketFile, startSignalServer);
+            fs.unlink(config.commsock, startSignalServer);
         });
     });
 } else {
