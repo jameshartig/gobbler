@@ -101,6 +101,7 @@ Parent.prototype.spawnChild = function(responseSocket) {
         return;
     }
     child = child_process.fork(childFilename);
+    child_process.exitWithParent(child);
     this.childrenByID[child.pid] = child;
     child._id = child.pid;
     this.setupChildListeners(child);
@@ -171,7 +172,7 @@ Parent.prototype.onChildDisconnect = function(child) {
     if (this.childrenByID[id]) {
         log('Child ' + id + ' disconnected. Restarting...');
         try {
-            this.childrenByID[id].kill('SIGINT');
+            this.childrenByID[id].kill();
         } catch (e) {}
         delete this.childrenByID[id];
         EntryPool.addEntry(this.crashedTimes, Date.now());
@@ -201,7 +202,7 @@ Parent.prototype.stopChildren = function(responseSocket) {
     var _this = this;
     this.eachChild(function(child) {
         delete _this.childrenByID[child._id];
-        child.kill('SIGINT');
+        child.kill();
     }, responseSocket, 'd');
 };
 Parent.prototype.restartChildren = function(responseSocket) {
@@ -269,7 +270,6 @@ Parent.prototype.onControlCommand = function(command, commandArgs, socket) {
     }
 };
 Parent.prototype.stop = function() {
-    ctrl.end();
     this.stopChildren();
 };
 
@@ -277,13 +277,6 @@ Parent.prototype.start = function() {
     var _this = this,
         controlSocket;
     this.started = true;
-
-    process.on('exit', function() {
-        _this.stop();
-    });
-    process.on('SIGINT', function() {
-        process.exit();
-    });
 
     if (!this.config) {
         this.loadConfig();
