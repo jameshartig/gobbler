@@ -188,6 +188,12 @@ Child.prototype.onServerHandle = function(handle) {
         log('Cannot set the handle again for a server');
         return;
     }
+    var obj = {},
+        err = handle.getsockname(obj);
+    //via https://github.com/joyent/node/issues/2721 (and well actually via net.js:1173
+    if (this.config && this.config.port && err === 0 && obj.port != this.config.port) {
+        throw new Error('Server port is already in use ' + this.config.port, 'EADDRINUSE');
+    }
     server.listening = true;
     server.listen(handle, function() {
         process.send('b');

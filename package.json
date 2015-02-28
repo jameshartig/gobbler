@@ -1,6 +1,6 @@
 {
   "name": "gobbler",
-  "version": "0.0.1-beta.14",
+  "version": "0.0.1-beta.16",
   "description": "Simple server that listens for data and forwards it somewhere",
   "main": "run.js",
   "repository": {
@@ -10,7 +10,7 @@
   "dependencies": {
     "child-process-debug": ">=0.0.5",
     "crc32": "0.2.2",
-    "daemonctrl": "~0",
+    "daemonctrl": ">=0.0.4",
     "dateformat": "^1.0.11",
     "delimiterstream": "alpha",
     "entrypool": "^0.1.0",

@@ -269,6 +269,7 @@ Parent.prototype.onControlCommand = function(command, commandArgs, socket) {
     }
 };
 Parent.prototype.stop = function() {
+    ctrl.end();
     this.stopChildren();
 };
 
