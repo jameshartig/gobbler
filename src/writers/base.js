@@ -5,8 +5,11 @@ var events = require('events'),
     reload = require('require-reload')(require);
 
 
-function BaseWriter() {
+function BaseWriter(oldWriter) {
     events.EventEmitter.call(this);
+    if (oldWriter) {
+        oldWriter.stop();
+    }
     this.started = false;
     this.queueLimit = 1000;
     this.drained = false;
@@ -49,5 +52,5 @@ BaseWriter.prototype.drain = function() {
         }
     }
 };
-BaseWriter.prototype.stop = function() {};
+BaseWriter.prototype.stop = function(owner) {};
 module.exports = BaseWriter;

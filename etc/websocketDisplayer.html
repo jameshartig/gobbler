@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head lang="en">
+    <title>Gobbler Messages</title>
+</head>
+<body>
+<pre style="display: block; position: fixed; top: 10px; right: 20px;, bottom: 0; left: 20px; overflow-y: auto; overflow-x: hidden;" id="messages"></pre>
+<script type="text/javascript">
+    var messages = document.getElementById('messages'),
+        queryParts = window.location.search.replace('?', '').split("&"),
+        ip = "", port = 80, ws, addr;
+
+    for (i = 0; i < queryParts.length; i++) {
+        if (queryParts[i].indexOf('ip=') === 0) {
+            ip = queryParts[i].substr(3);
+        } else if (queryParts[i].indexOf('port=') === 0) {
+            port = queryParts[i].substr(5);
+        }
+    }
+
+    addr = 'ws://' + ip + ':' + port + '/';
+    ws = new WebSocket(addr);
+    function insertMessage(node) {
+        if (!messages.firstChild) {
+            messages.appendChild(node);
+        } else {
+            messages.insertBefore(node, messages.firstChild);
+        }
+    }
+    ws.onopen = function() {
+        var p = document.createElement('p');
+        p.style.fontWeight = 'bold';
+        p.style.wordWrap = 'break-word';
+        p.innerText = 'Connected to ' + ip;
+        insertMessage(p);
+    };
+    ws.onmessage = function(ev) {
+        var p = document.createElement('p');
+        p.style.wordWrap = 'break-word';
+        p.innerText = ev.data;
+        console.log(ev.data);
+        insertMessage(p);
+    };
+    ws.onclose = function() {
+        var p = document.createElement('p');
+        p.style.wordWrap = 'break-word';
+        p.style.fontWeight = 'bold';
+        p.innerText = 'Disconnected from websocket! Refresh!!';
+        insertMessage(p);
+    };
+</script>
+</body>
+</html>

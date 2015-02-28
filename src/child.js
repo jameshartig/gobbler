@@ -53,7 +53,7 @@ Child.prototype.start = function() {
     this.started = true;
     this.setupServerListeners();
     this.createPool();
-    this.restartWriters();
+    this.startWriters();
 };
 Child.prototype.createPool = function(initialSize) {
     if (this.pool) {
@@ -119,6 +119,7 @@ Child.prototype.setupServerListeners = function() {
     this.server.removeAllListeners('clientConnect').on('clientConnect', this.onClientConnect.bind(this));
     this.server.removeAllListeners('clientDisconnect').on('clientDisconnect', this.onClientDisconnect.bind(this));
     this.server.removeAllListeners('message').on('message', this.onClientMessage.bind(this));
+    this.server.removeAllListeners('error').on('error', this.onServerError.bind(this));
 };
 Child.prototype.onClientConnect = function(socket) {
     var ip = socket.remoteAddress,
@@ -178,14 +179,17 @@ Child.prototype.runGC = function() {
         }
     }
 };
+Child.prototype.onServerError = function(error) {
+    log('Error listening to port!', error);
+};
 Child.prototype.onServerHandle = function(handle) {
     var server = this.server;
     if (server.listening) {
         log('Cannot set the handle again for a server');
         return;
     }
+    server.listening = true;
     server.listen(handle, function() {
-        server.listening = true;
         process.send('b');
     });
 };
@@ -206,7 +210,7 @@ Child.prototype.setConfig = function(config) {
     if (!config) {
         throw new TypeError('Invalid config passed to Child.setConfig');
     }
-    var formatters, f, name;
+    var formatters, name;
     this.config = config;
     if (this.role !== config.role) {
         this.setRole(config.role);
@@ -217,7 +221,7 @@ Child.prototype.setConfig = function(config) {
         }
         this.setWriters(config.writers);
         if (this.started) {
-            this.restartWriters();
+            this.startWriters();
         }
     }
     if (config.formatters) {

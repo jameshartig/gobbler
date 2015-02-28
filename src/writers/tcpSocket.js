@@ -6,8 +6,11 @@ var util = require('util'),
     BaseWriter = reload('./base.js'),
     noop = function(){};
 
-function TCPSocketWriter() {
+function TCPSocketWriter(oldWriter) {
     BaseWriter.call(this);
+    if (oldWriter) {
+        oldWriter.stop();
+    }
     this.connected = false;
     this.pendingConnect = 0;
     this.reconnectWait = 1000; //default to reconnect in one second (set to -1 to disable)

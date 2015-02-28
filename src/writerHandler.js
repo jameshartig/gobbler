@@ -1,13 +1,16 @@
 var events = require('events'),
     util = require('util'),
+    path = require('path'),
     reload = require('require-reload')(require),
-    log = require('./log.js');
+    log = require('./log.js'),
+    crc32 = require('crc32');
 
 function WriterHandler(oldHandler) {
     events.EventEmitter.call(this);
     if (oldHandler !== undefined) {
         this.writers = oldHandler.writers;
         this.formatters = oldHandler.formatters;
+        //todo: what do we do about servers since we can't "restart" them
         this.restartWriters();
     } else {
         this.writers = [];
@@ -24,14 +27,14 @@ WriterHandler.prototype.setupWriterListeners = function(writer) {
     writer.removeAllListeners('error').on('error', this.onWriterError.bind(this, writer));
 };
 WriterHandler.prototype.onWriterStart = function(writer) {
-    log('Started tcp socket writer', writer.logName);
+    log('Started writer', writer.logName);
 };
 WriterHandler.prototype.onWriterError = function(writer, error) {
-    log('Error on tcp socket writer', writer.logName, ':', error.message);
+    log('Error on writer', writer.logName, ':', error.message);
 };
 WriterHandler.prototype.stopWriters = function() {
     for (var i = 0; i < this.writers.length; i++) {
-        this.writers[i].stop();
+        this.writers[i].stop(this);
         this.writers[i].removeAllListeners();
     }
 };
@@ -42,47 +45,94 @@ WriterHandler.prototype.startWriters = function() {
     }
 };
 WriterHandler.prototype.restartWriters = function() {
-    var i, writer, config;
     this.stopWriters();
-    for (i = 0; i < this.writers.length; i++) {
-        config = this.writers[i].config;
-        writer = new (reload('./writers/' + config.type))();
-        writer.config = config;
-        writer.setConfig(config);
-    }
+    this._reloadWriters(this.writers);
     this.startWriters();
 };
+WriterHandler.prototype._reloadWriters = function(writers) {
+    var newWriters = [],
+        writersByCRC = {},
+        folder = path.dirname(__filename) + '/writers/',
+        i, crc, filename, oldWriter, config, writer;
+    for (i = 0; i < this.writers.length; i++) {
+        writersByCRC[this.writers[i].configCRC] = this.writers[i];
+    }
+    for (i = 0; i < writers.length; i++) {
+        if (writers[i].constructor === Object) {
+            config = writers[i];
+            //todo: if duplicates we need to do something
+            crc = crc32(JSON.stringify(config)) + writers[i].type;
+        } else {
+            crc = writers[i].configCRC;
+            config = writers[i].config;
+        }
+        if (!config.type) {
+            throw new TypeError('Invalid config specified. No type for writer ' + i);
+        }
+        oldWriter = writersByCRC[crc];
+        delete writersByCRC[crc];
+
+        filename = resolveFilename(folder, config.type);
+        //todo: we should be removing all the listeners as well on oldWriter
+        writer = new (reload(filename))(oldWriter);
+        writer.config = config;
+        writer.configCRC = crc;
+        writer.setConfig(config);
+        newWriters.push(writer);
+    }
+    for (crc in writersByCRC) {
+        writer = writersByCRC[crc];
+        log('Destroying leftover writer', writer.config.type);
+        writer.stop(this);
+        //todo: we should be removing all the listeners as well on writer
+    }
+    return newWriters;
+};
+function resolveFilename(expectedPath, name) {
+    if (expectedPath[expectedPath.length - 1] !== '/') {
+        expectedPath += '/';
+    }
+    var filename;
+    //check to see if they specified an absolute path
+    if (name[0] === '/') {
+        filename = name;
+        reload.resolve(filename);
+    } else {
+        try {
+            //try formatters/{type}
+            filename = expectedPath + name;
+            reload.resolve(filename);
+        } catch (e) {
+            //try relative to running folder
+            filename = [process.cwd(), name].join('/');
+            reload.resolve(filename);
+        }
+    }
+    return filename;
+}
 WriterHandler.prototype.setFormatters = function(formatters) {
-    var i, type, file, formatter;
+    var folder = path.dirname(__filename) + '/formatters/',
+        i, type, filename, formatter;
     this.formatters = [];
     for (i = 0; i < formatters.length; i++) {
         if (typeof formatters[i] === 'string') {
-            if (formatters[i][0] !== '/') {
-                file = reload('./formatters/' + formatters[i]);
-            } else {
-                file = reload(formatters[i]);
-            }
             type = formatters[i];
         } else {
-            file = reload('./formatters/' + formatters[i].type);
             type = formatters[i].type;
+            if (!type) {
+                throw new TypeError('Invalid config specified. No type for formatter ' + i);
+            }
         }
-        formatter = new file();
+        filename = resolveFilename(folder, type);
+        formatter = new (reload(filename))();
         formatter.type = type;
         this.formatters.push(formatter);
     }
 };
-//does NOT start the writers
+//does NOT start the writers, unless they were ALREADY started and the writer is a server
 WriterHandler.prototype.setWriters = function(writers) {
-    var i, writer;
-    this.stopWriters();
-    this.writers = [];
-    for (i = 0; i < writers.length; i++) {
-        writer = new (reload('./writers/' + writers[i].type))();
-        writer.config = writers[i];
-        writer.setConfig(writers[i]);
-        this.writers.push(writer);
-    }
+    this.writers = this._reloadWriters(writers);
+    //todo: cleanup writers that no longer exist...?
 };
 WriterHandler.prototype.writeMessage = function(msg, options) {
     var message = msg,

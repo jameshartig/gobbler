@@ -7,6 +7,7 @@ var net = require('net'),
     flags = require('flags'),
     dateFormat = require('dateformat'),
     log = require('./log.js'),
+    ctrl = require('daemonctrl'),
     reload = require('require-reload')(require),
     numCPUs = require('os').cpus().length,
     isWindows = /^win/.test(process.platform),
@@ -27,6 +28,7 @@ function cleanupListeners(pendingListeners, inMS) {
 
 function Parent() {
     WriterHandler.call(this);
+    this.started = false;
     this.isParent = true;
     this.isChild = false;
     this.childrenByID = {};
@@ -44,6 +46,7 @@ Parent.prototype.parseFlags = function() {
     f.defineString('role', '', 'the name of this gobbler instance');
     f.defineString('controlsock', isWindows ? '' : './control.sock', 'unix socket to listen to for reloading/restarting');
     f.defineString('config', './config.json', 'config file to load');
+    //f.defineString('daemonize', 'no', 'should we daemonize? Cannot set this via config');
     //true: ignore unknown arguments
     f.parse(null, true);
     this.flags = f;
@@ -58,6 +61,8 @@ Parent.prototype.loadConfig = function() {
         file = path.resolve(process.cwd(), file);
         if (fs.existsSync(file)) {
             this.config = reload(file);
+            //todo: allow them to set daemon in the config
+            delete this.config.daemonize;
         }
     }
     //overwrite any values in config with ones passed in
@@ -75,17 +80,27 @@ Parent.prototype.loadConfig = function() {
     if (this.config.children < 1) {
         throw new Error('Invalid number of children');
     }
+    if (this.config.writers) {
+        if (!Array.isArray(this.config.writers)) {
+            throw new TypeError('Invalid config.writers passed to Parent.loadConfig');
+        }
+        this.setWriters(this.config.writers);
+        if (this.started) {
+            this.startWriters();
+        }
+    }
 };
 
 Parent.prototype.spawnChild = function(responseSocket) {
     var now = Date.now(),
+        childFilename = path.resolve(path.dirname(process.mainModule.filename), './startChild.js'),
         child;
-    if (EntryPool.cleanupEntries(this.crashedTimes, (now - 5000)) >= Math.max(3, this.config.children)) {
+    if (EntryPool.cleanupEntries(this.crashedTimes, (now - 5000)) === this.crashedTimes.length) {
         log('Children are crashing too quickly. Dying...');
         process.exit();
         return;
     }
-    child = child_process.fork('./startChild.js');
+    child = child_process.fork(childFilename);
     this.childrenByID[child.pid] = child;
     child._id = child.pid;
     this.setupChildListeners(child);
@@ -212,11 +227,7 @@ Parent.prototype.dispatchConfig = function(responseSocket) {
     }, responseSocket, 'f');
 };
 
-Parent.prototype.onControlCommand = function(socket, command) {
-    if (!socket.writable) {
-        socket.end();
-        return;
-    }
+Parent.prototype.onControlCommand = function(command, commandArgs, socket) {
     //todo: we should use deferreds and chainloading instead of this
     socket._pendingResponses = 0;
     socket._onLastPendingResponse = function() {
@@ -258,10 +269,6 @@ Parent.prototype.onControlCommand = function(socket, command) {
     }
 };
 Parent.prototype.stop = function() {
-    //todo: does this really do anything?
-    if (this.commandServer) {
-        this.commandServer.close();
-    }
     this.stopChildren();
 };
 
@@ -279,8 +286,10 @@ Parent.prototype.start = function() {
 
     if (!this.config) {
         this.loadConfig();
+    } else {
+        this.startWriters();
     }
-    this.crashedTimes = new Array(this.config.children);
+    this.crashedTimes = new Array(Math.max(3, this.config.children));
     controlSocket = this.config.controlsock;
     if (!controlSocket) {
         this.startPotluckServer();
@@ -311,26 +320,7 @@ Parent.prototype.start = function() {
 };
 
 Parent.prototype.startControlServer = function() {
-    var server = net.createServer({allowHalfOpen: true}),
-        _this = this;
-    this.commandServer = server;
-    server.on('connection', function(socket) {
-        var command = '';
-        socket.setEncoding('utf8');
-        socket.on('data', function(data) {
-            command += data;
-        });
-        //once we get a FIN then we know the sending side is done sending data
-        socket.on('end', function() {
-            _this.onControlCommand(socket, command);
-        });
-        socket.on('error', function(err) {
-            log('Error on command socket: ' + err.message);
-        });
-    });
-    server.listen(this.config.controlsock, this.startPotluckServer.bind(this));
-    //don't let this server stop us from dying
-    server.unref();
+    ctrl.listen(this.startPotluckServer.bind(this)).on('command', this.onControlCommand.bind(this));
 };
 
 Parent.prototype.startPotluckServer = function() {
