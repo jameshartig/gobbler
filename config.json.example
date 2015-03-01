@@ -11,5 +11,6 @@
     "persistantConns": 10,
     "messages": 100,
     "messagesTimeframe": 60
-  }
+  },
+  "clientLogLevel": 0
 }

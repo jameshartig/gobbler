@@ -32,10 +32,11 @@ WriterHandler.prototype.onWriterStart = function(writer) {
 WriterHandler.prototype.onWriterError = function(writer, error) {
     log('Error on writer', writer.logName, ':', error.message);
 };
-WriterHandler.prototype.stopWriters = function() {
-    for (var i = 0; i < this.writers.length; i++) {
-        this.writers[i].stop(this);
-        this.writers[i].removeAllListeners();
+WriterHandler.prototype.stopWriters = function(otherWriters) {
+    var writers = otherWriters || this.writers;
+    for (var i = 0; i < writers.length; i++) {
+        writers[i].stop(this);
+        writers[i].removeAllListeners();
     }
 };
 WriterHandler.prototype.startWriters = function() {
@@ -45,7 +46,6 @@ WriterHandler.prototype.startWriters = function() {
     }
 };
 WriterHandler.prototype.restartWriters = function() {
-    this.stopWriters();
     this._reloadWriters(this.writers);
     this.startWriters();
 };
@@ -53,6 +53,7 @@ WriterHandler.prototype._reloadWriters = function(writers) {
     var newWriters = [],
         writersByCRC = {},
         folder = path.dirname(__filename) + '/writers/',
+        beforeWriters = this.writers,
         i, crc, filename, oldWriter, config, writer;
     for (i = 0; i < this.writers.length; i++) {
         writersByCRC[this.writers[i].configCRC] = this.writers[i];
@@ -80,12 +81,7 @@ WriterHandler.prototype._reloadWriters = function(writers) {
         writer.setConfig(config);
         newWriters.push(writer);
     }
-    for (crc in writersByCRC) {
-        writer = writersByCRC[crc];
-        log('Destroying leftover writer', writer.config.type);
-        writer.stop(this);
-        //todo: we should be removing all the listeners as well on writer
-    }
+    this.stopWriters(beforeWriters);
     return newWriters;
 };
 function resolveFilename(expectedPath, name) {
@@ -132,7 +128,6 @@ WriterHandler.prototype.setFormatters = function(formatters) {
 //does NOT start the writers, unless they were ALREADY started and the writer is a server
 WriterHandler.prototype.setWriters = function(writers) {
     this.writers = this._reloadWriters(writers);
-    //todo: cleanup writers that no longer exist...?
 };
 WriterHandler.prototype.writeMessage = function(msg, options) {
     var message = msg,
@@ -146,12 +141,13 @@ WriterHandler.prototype.writeMessage = function(msg, options) {
             }
         } catch (e) {
             log('Error formatting message from', lastFormatter, ':', e.message);
-            return;
+            return new Error('formatting_error via ' + lastFormatter + ': ' + e.message, 'formatting_error');
         }
     }
     for (i = 0; i < this.writers.length; i++) {
         this.writers[i].write(message);
     }
+    return null;
 };
 
 module.exports = WriterHandler;

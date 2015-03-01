@@ -5,9 +5,12 @@ var log = require('./src/log.js'),
     currentParent = new Parent(),
     config, sender;
 
-function onExit() {
+function onExit(error) {
     currentParent.stop();
     ctrl.end();
+    if (error) {
+        throw e;
+    }
     process.exit();
 }
 process.on('exit', onExit);
@@ -24,6 +27,7 @@ if (!currentParent.config.controlsock) {
 }
 sender = ctrl.send();
 if (!sender) {
+    log('Starting parent');
     currentParent.start();
     return;
 }

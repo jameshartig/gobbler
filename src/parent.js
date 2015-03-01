@@ -113,6 +113,7 @@ Parent.prototype.spawnChild = function(responseSocket) {
 Parent.prototype.setupChildListeners = function(child) {
     child.removeAllListeners('message').on('message', this.onChildMessage.bind(this, child, process.stdout, null));
     child.removeAllListeners('disconnect').on('disconnect', this.onChildDisconnect.bind(this, child));
+    child.removeAllListeners('exit').on('exit', this.onChildDisconnect.bind(this, child));
 };
 Parent.prototype.onChildMessage = function(child, responseSocket, waitingMessage, message) {
     var id = child._id,
@@ -171,10 +172,10 @@ Parent.prototype.onChildDisconnect = function(child) {
 
     if (this.childrenByID[id]) {
         log('Child ' + id + ' disconnected. Restarting...');
-        try {
-            this.childrenByID[id].kill();
-        } catch (e) {}
         delete this.childrenByID[id];
+        try {
+            child.kill();
+        } catch (e) {}
         EntryPool.addEntry(this.crashedTimes, Date.now());
         this.spawnChild();
     }
@@ -315,6 +316,7 @@ Parent.prototype.start = function() {
 
 Parent.prototype.startControlServer = function() {
     ctrl.listen(this.startPotluckServer.bind(this)).on('command', this.onControlCommand.bind(this));
+    log('Started control server server on ' + this.config.controlsock);
 };
 
 Parent.prototype.startPotluckServer = function() {

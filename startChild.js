@@ -7,12 +7,20 @@ var posix = require('posix'),
 process.on('message', function(msg, handle) {
     currentChild.handleParentMessage(msg, handle);
 });
-process.on('SIGINT', function() {
+
+function onExit(error) {
     if (process.connected) {
         process.send('d');
     }
+    if (error) {
+        throw error;
+    }
     process.exit();
-});
+}
+process.on('exit', onExit);
+process.on('SIGINT', onExit);
+process.on('SIGTERM', onExit);
+
 process.on('SIGHUP', function() {
     var status = 'unknown';
     try {

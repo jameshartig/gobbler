@@ -9,7 +9,9 @@ var util = require('util'),
         messagesTimeframe: 60
     },
     idleTimeout = 5 * 1000,
-    messageOptions = {};
+    messageOptions = {},
+    _RATE_LIMITED_ = "rate_limited\n",
+    _INVALID_PAYLOAD_ = "invalid_payload\n";
 
 function Child(oldChild) {
     WriterHandler.call(this, oldChild);
@@ -28,6 +30,7 @@ function Child(oldChild) {
         this.formatters = oldChild.formatters;
         this.maxMessagesAllowed = oldChild.maxMessagesAllowed;
         this.maxMessagesTimeframe = oldChild.maxMessagesTimeframe;
+        this.clientLogLevel = oldChild.clientLogLevel || 0;
         clearInterval(oldChild.gc);
         this.startGCInterval();
     } else {
@@ -36,6 +39,7 @@ function Child(oldChild) {
         this.connectionsPerIP = {};
         this.messagesPerIP = {};
         this.role = '';
+        this.clientLogLevel = 0;
     }
 }
 util.inherits(Child, WriterHandler);
@@ -103,6 +107,10 @@ Child.prototype.setRole = function(role) {
     }
     return true;
 };
+Child.prototype.setClientLogLevel = function(level) {
+    this.clientLogLevel = Number(level) || 0;
+    return true;
+};
 Child.prototype.flushTrackedConnections = function() {
     for (var ip in this.connectionsPerIP) {
         this.pool.put(this.connectionsPerIP[ip]);
@@ -154,21 +162,33 @@ Child.prototype.onClientDisconnect = function(socket) {
         }
     }
 };
-Child.prototype.onClientMessage = function(message, socket) {
+Child.prototype.onClientMessage = function(message, socket, writer) {
     var ip = socket._remoteAddress,
-        now = Date.now();
+        now = Date.now(),
+        err;
     if (this.messagesPerIP[ip] === undefined) {
         this.messagesPerIP[ip] = this.pool.get();
     }
     if (EntryPool.numEntries(this.messagesPerIP[ip]) >= this.maxMessagesAllowed) {
         log('dropping message from', ip);
+        if (this.clientLogLevel > 1) {
+            socket.write(_RATE_LIMITED_);
+        }
         return;
     }
     //remove any entries
     EntryPool.addEntry(this.messagesPerIP[ip], now);
     messageOptions.ip = ip;
     messageOptions.timestamp = now;
-    this.writeMessage(message, messageOptions);
+    err = this.writeMessage(message, messageOptions);
+    if (!err || this.clientLogLevel < 1) {
+        return;
+    }
+    if (this.clientLogLevel > 1) {
+        writer.write(err.message + "\n");
+    } else {
+        writer.write(_INVALID_PAYLOAD_);
+    }
 };
 Child.prototype.runGC = function() {
     var cleanupIfBefore = Date.now() - this.maxMessagesTimeframe;
@@ -253,6 +273,9 @@ Child.prototype.setConfig = function(config) {
     }
     if (!this.setMaxMessagesTimeframe(config.limits.messagesTimeframe)) {
         throw new Error('Cannot set limit of messagesTimeframe. ' + config.limits.messagesTimeframe + ' is either higher than the current value or less than 1');
+    }
+    if (config.clientLogLevel !== undefined) {
+        this.setClientLogLevel(config.clientLogLevel);
     }
 };
 Child.prototype.handleParentMessage = function(message, handle) {

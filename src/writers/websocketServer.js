@@ -2,6 +2,7 @@ var util = require('util'),
     net = require('net'),
     log = require('../log.js'),
     ws = require('ws'),
+    RingBuffer = require('ringbufferjs'),
     //for anything that is NOT internal require's you should use reload(moduleName) so it gets hot-reloaded
     reload = require('require-reload')(require),
     portluck = reload('portluck'),
@@ -9,17 +10,38 @@ var util = require('util'),
     TCPSocketWriter = reload('./tcpSocket.js'),
     noop = function(){};
 
+//pulled from https://github.com/janogonzalez/ringbufferjs/pull/1
+RingBuffer.prototype.peek = function(count) {
+    if (this.isEmpty()) throw new Error('RingBuffer is empty');
+
+    if (count === undefined) return this._elements[this._first];
+
+    count = Math.min(count, this.size());
+    var results = new Array(count);
+    for (var i = this._first, c = 0; c < count; i++, c++) {
+        if (i >= this.capacity()) i = 0; // Wrap around to the beginning
+        results[c] = this._elements[i];
+    }
+    return results;
+};
+
 function WebsocketServerWriter(oldWriter) {
     BaseWriter.call(this);
     if (oldWriter) {
         this.owner = oldWriter.owner;
         this.internalServer = oldWriter.internalServer;
+        //clear out the properties on the old writer so they don't get killed on reload on this writer
+        oldWriter.internalServer = null;
         this.wsServer = oldWriter.wsServer;
+        oldWriter.wsServer = null;
+        this.wsClients = oldWriter.wsClients;
+        oldWriter.wsClients = null;
         this.serverOptions = oldWriter.serverOptions;
         this.wsClients = oldWriter.wsClients;
         this.internalPort = oldWriter.internalPort;
         this.logName = oldWriter.logName;
         this.restartWait = oldWriter.restartWait;
+        this.sendPrevious = oldWriter.sendPrevious;
         this.socketWriter = oldWriter.socketWriter;
         if (this.socketWriter) {
             this.startSocket();
@@ -28,8 +50,11 @@ function WebsocketServerWriter(oldWriter) {
         this.connected = false;
         this.restartWait = 1000; //default to restart in one second (set to -1 to disable)
         this.logName = 'unknown';
+        this.sendPrevious = 0;
+        this.previousMessages = null;
         this.internalServer = null;
         this.wsServer = null;
+        this.wsClients = null;
         this.socketWriter = null;
     }
 }
@@ -58,6 +83,14 @@ WebsocketServerWriter.prototype.setConfig = function(config) {
     if (config.restartWait != null) {
         this.restartWait = config.restartWait;
     }
+    if (config.sendPrevious != null && config.sendPrevious !== this.sendPrevious) {
+        this.sendPrevious = config.sendPrevious;
+        if (this.sendPrevious > 0) {
+            this.previousMessages = new RingBuffer(this.sendPrevious);
+        } else {
+            this.previousMessages = null;
+        }
+    }
 };
 
 WebsocketServerWriter.prototype.startWebsocketServer = function() {
@@ -68,25 +101,54 @@ WebsocketServerWriter.prototype.startWebsocketServer = function() {
     if (!this.wsServer) {
         this.wsClients = [];
         this.wsServer = new ws.Server({host: this.serverOptions.ip, port: this.serverOptions.port});
-        this.wsServer.on('error', this.emitWSServerEvent.bind(this, this.wsServer, 'error'));
+        this.wsServer.on('error', this.onWSServerError.bind(this, this.wsServer));
         log('Websocket server is listening on', [this.serverOptions.ip, this.serverOptions.port].join(':'));
         //todo: if this crashes we should try to restart it?
     }
-    this.wsServer.removeAllListeners('connection').on('connection', function(ws) {
-        var _this = this;
-        this.wsClients.push(ws);
-        //ignore any data we get
-        ws.once('close', function() {
-            var index = _this.wsClients.indexOf(ws);
-            if (index > -1) {
-                _this.wsClients.splice(index, 1);
-            }
-        });
-    }.bind(this));
+    this.wsServer.removeAllListeners('connection').on('connection', this.onNewWSClient.bind(this, this.wsServer));
 };
-WebsocketServerWriter.prototype.emitWSServerEvent = function(server) {
+WebsocketServerWriter.prototype.onNewWSClient = function(server, client) {
     if (this.wsServer !== server) return;
-    this.emit.apply(this, Array.prototype.slice.call(arguments, 1));
+    var _this = this;
+    this.wsClients.push(client);
+    //ignore any data we get
+    client.once('close', function() {
+        if (!_this.wsClients) return;
+
+        var index = _this.wsClients.indexOf(client);
+        if (index > -1) {
+            _this.wsClients.splice(index, 1);
+        }
+    });
+    this.sendPreviousMessages(client);
+};
+WebsocketServerWriter.prototype.sendPreviousMessages = function(client) {
+    if (!this.previousMessages || this.previousMessages.isEmpty()) {
+        return;
+    }
+    var msgs = this.previousMessages.peek(this.previousMessages.size()),
+        i;
+    //if ringbuffer.peek(1) returns only the first one and not an array, don't loop
+    if (msgs instanceof Buffer) {
+        client.send(msgs, {binary: false});
+        return;
+    }
+    for (i = 0; i < msgs.length; i++) {
+        client.send(msgs[i], {binary: false});
+    }
+};
+WebsocketServerWriter.prototype.onWSServerError = function(server) {
+    if (this.wsServer !== server) return;
+    server.removeAllListeners();
+    try {
+        this.destroyWSClients();
+        server.close();
+    } catch (e) {
+        log('Failed to close errored wsServer:', e.message);
+    }
+    this.wsServer = null;
+    //todo: retry starting it
+    this.emit('error');
 };
 WebsocketServerWriter.prototype.startInternalServer = function() {
     if (!this.internalPort) {
@@ -151,8 +213,18 @@ WebsocketServerWriter.prototype.broadcastMessage = function(message) {
     }
     for (var i = 0; i < this.wsClients.length; i++) {
         try {
+            if (this.wsClients[i].readyState !== ws.OPEN) {
+                this.wsClients.splice(i, 1);
+                i--;
+                continue;
+            }
             this.wsClients[i].send(message, {binary: false});
-        } catch (e) {}
+        } catch (e) {
+            log('Error writing to websocket client:', e.message);
+        }
+    }
+    if (this.previousMessages) {
+        this.previousMessages.enq(message);
     }
 };
 WebsocketServerWriter.prototype.write = function(message) {
@@ -163,9 +235,25 @@ WebsocketServerWriter.prototype.write = function(message) {
     this.socketWriter.write(message);
     return true;
 };
+WebsocketServerWriter.prototype.destroyWSClients = function(owner) {
+    if (this.wsClients) {
+        for (var i = 0; i < this.wsClients.length; i++) {
+            try {
+                this.wsClients.destroy();
+            } catch (e) {}
+        }
+    }
+};
 WebsocketServerWriter.prototype.stop = function(owner) {
     if (this.socketWriter) {
         this.socketWriter.stop(owner);
+    }
+    if (this.internalServer) {
+        this.internalServer.close();
+    }
+    if (this.wsServer) {
+        this.destroyWSClients();
+        this.wsServer.close();
     }
 };
 module.exports = WebsocketServerWriter;
