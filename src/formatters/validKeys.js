@@ -8,19 +8,19 @@ ValidKeysFormatter.prototype.format = function(msg) {
     if (typeof msg !== 'object') {
         throw new TypeError('Invalid object sent to ValidKeysFormatter');
     }
-    var message = msg,
+    var obj = msg,
         i;
     if (typeof msg.toObject === 'function') {
-        message = msg.toObject();
+        obj = msg.toObject();
     }
-    if (message.constructor && message.constructor !== Object) {
-        throw new TypeError('Invalid object sent to ValidKeysFormatter: ' + message.constructor);
+    if (obj.constructor && obj.constructor !== Object) {
+        throw new TypeError('Invalid object sent to ValidKeysFormatter: ' + obj.constructor);
     }
     for (i = 0; i < this.keys.length; i++) {
-        if (!message.hasOwnProperty(this.keys[i]) || message[this.keys[i]] === 'undefined') {
+        if (!obj.hasOwnProperty(this.keys[i]) || obj[this.keys[i]] === 'undefined') {
             throw new Error('Message is missing required key: ' + this.keys[i]);
         }
     }
-    return message;
+    return msg;
 };
 module.exports = ValidKeysFormatter;

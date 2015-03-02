@@ -15,7 +15,6 @@ JSONWrapFormatter.prototype.format = function(msg, initalObj) {
         }
     }
     obj[this.key] = message;
-    console.log(obj);
     result = JSONMessage.getInstance(module).overwrite().extend(obj);
     obj[this.key] = undefined;
     return result;
