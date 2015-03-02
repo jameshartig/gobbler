@@ -1,3 +1,4 @@
+//DEPRECATED
 function JSONFormatter() {}
 JSONFormatter.prototype.format = function(msg, initalObj) {
     var message = msg,

@@ -4,7 +4,8 @@
   ],
   "formatters": [
     {"type": "charLimit", "limit": 1024},
-    "json",
+    "jsonParse",
+    "jsonWrap",
     "trailingNewLine"
   ],
   "limits": {

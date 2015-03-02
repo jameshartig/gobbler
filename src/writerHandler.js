@@ -76,6 +76,7 @@ WriterHandler.prototype._reloadWriters = function(writers) {
         filename = resolveFilename(folder, config.type);
         //todo: we should be removing all the listeners as well on oldWriter
         writer = new (reload(filename))(oldWriter);
+        writer.type = config.type;
         writer.config = config;
         writer.configCRC = crc;
         writer.setConfig(config);
@@ -108,20 +109,21 @@ function resolveFilename(expectedPath, name) {
 }
 WriterHandler.prototype.setFormatters = function(formatters) {
     var folder = path.dirname(__filename) + '/formatters/',
-        i, type, filename, formatter;
+        i, type, filename, formatter, options;
     this.formatters = [];
     for (i = 0; i < formatters.length; i++) {
         if (typeof formatters[i] === 'string') {
-            type = formatters[i];
+            options = {type: formatters[i]};
         } else {
-            type = formatters[i].type;
-            if (!type) {
+            options = formatters[i];
+            if (!options.type) {
                 throw new TypeError('Invalid config specified. No type for formatter ' + i);
             }
         }
-        filename = resolveFilename(folder, type);
-        formatter = new (reload(filename))();
-        formatter.type = type;
+        filename = resolveFilename(folder, options.type);
+        formatter = new (reload(filename))(options);
+        formatter.type = options.type;
+        formatter.config = options;
         this.formatters.push(formatter);
     }
 };

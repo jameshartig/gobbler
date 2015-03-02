@@ -172,7 +172,7 @@ Child.prototype.onClientMessage = function(message, socket, writer) {
     if (EntryPool.numEntries(this.messagesPerIP[ip]) >= this.maxMessagesAllowed) {
         log('dropping message from', ip);
         if (this.clientLogLevel > 1) {
-            socket.write(_RATE_LIMITED_);
+            writer.write(_RATE_LIMITED_);
         }
         return;
     }
@@ -254,6 +254,8 @@ Child.prototype.setConfig = function(config) {
         if (!Array.isArray(config.formatters)) {
             throw new TypeError('Invalid config.formatters passed to Child.setConfig');
         }
+        //clear this out to prevent any key changes from leaving properties around
+        messageOptions = {};
         this.setFormatters(config.formatters);
     }
 
