@@ -1,9 +1,10 @@
 var events = require('events'),
     util = require('util'),
     path = require('path'),
+    crc32 = require('crc32'),
     reload = require('require-reload')(require),
     log = require('./log.js'),
-    crc32 = require('crc32');
+    JSONMessage = reload('./messages/json');
 
 function WriterHandler(oldHandler) {
     events.EventEmitter.call(this);
@@ -59,7 +60,7 @@ WriterHandler.prototype._reloadWriters = function(writers) {
         writersByCRC[this.writers[i].configCRC] = this.writers[i];
     }
     for (i = 0; i < writers.length; i++) {
-        if (writers[i].constructor === Object) {
+        if (!writers[i].constructor || writers[i].constructor === Object) {
             config = writers[i];
             //todo: if duplicates we need to do something
             crc = crc32(JSON.stringify(config)) + writers[i].type;
@@ -74,7 +75,6 @@ WriterHandler.prototype._reloadWriters = function(writers) {
         delete writersByCRC[crc];
 
         filename = resolveFilename(folder, config.type);
-        //todo: we should be removing all the listeners as well on oldWriter
         writer = new (reload(filename))(oldWriter);
         writer.type = config.type;
         writer.config = config;
@@ -145,6 +145,9 @@ WriterHandler.prototype.writeMessage = function(msg, options) {
             log('Error formatting message from', lastFormatter, ':', e.message);
             return new Error('formatting_error via ' + lastFormatter + ': ' + e.message, 'formatting_error');
         }
+    }
+    if (typeof message !== 'string' && !(message instanceof Buffer)) {
+        message = message.toString();
     }
     for (i = 0; i < this.writers.length; i++) {
         this.writers[i].write(message);

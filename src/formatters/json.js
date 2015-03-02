@@ -1,8 +1,8 @@
 //DEPRECATED
 function JSONFormatter() {}
-JSONFormatter.prototype.format = function(msg, initalObj) {
+JSONFormatter.prototype.format = function(msg, messageOptions) {
     var message = msg,
-        obj = initalObj || {};
+        obj = messageOptions || {};
     if (message instanceof Buffer) {
         message = message.toString();
     }
