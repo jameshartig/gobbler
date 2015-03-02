@@ -40,6 +40,9 @@ JSONMessage.prototype.extend = function(obj) {
 JSONMessage.prototype.has = function(key) {
     return (this.obj.hasOwnProperty(key) && this.obj[key] !== undefined);
 };
+JSONMessage.prototype.get = function(key) {
+    return this.obj[key];
+};
 JSONMessage.prototype.append = function(toAppend, reset) {
     if (typeof toAppend !== 'string') {
         throw new TypeError('Invalid string sent to JSONMessage.append');

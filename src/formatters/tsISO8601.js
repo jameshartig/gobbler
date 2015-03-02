@@ -1,24 +1,23 @@
 var JSONMessage = require('../messages/json'),
     _date = new Date();
 
-function TSISO8601() {}
+function TSISO8601(options) {
+    this.key = (options && options.key) || 'timestamp';
+}
 TSISO8601.prototype.format = function(msg, messageOptions) {
     var message = msg,
         tsISO;
-    if (!messageOptions.timestamp) {
-        throw new Error('Failed to get timestamp for ISO8601 from messageOptions');
-    }
-    _date.setTime(messageOptions.timestamp);
-    tsISO = _date.toISOString();
+    //todo: detect if its already in ISO8601 format
     if (message instanceof JSONMessage) {
-        if (message.has('timestamp')) {
+        if (message.has(this.key)) {
+            _date.setTime(message.get(this.key));
+            tsISO = _date.toISOString();
             message = message.extend({timestamp: tsISO});
         }
-    } else if (typeof message === 'object' && message.hasOwnProperty('timestamp')) {
+    } else if (typeof message === 'object' && message.hasOwnProperty(this.key)) {
+        _date.setTime(message[this.key]);
+        tsISO = _date.toISOString();
         message.timestamp = tsISO;
-    }
-    if (typeof messageOptions === 'object' && messageOptions.timestamp !== undefined) {
-        messageOptions.timestamp = tsISO;
     }
     return message;
 };
