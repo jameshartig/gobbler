@@ -37,7 +37,6 @@ function WebsocketServerWriter(oldWriter) {
         this.wsClients = oldWriter.wsClients;
         oldWriter.wsClients = null;
         this.serverOptions = oldWriter.serverOptions;
-        this.wsClients = oldWriter.wsClients;
         this.internalPort = oldWriter.internalPort;
         this.logName = oldWriter.logName;
         this.restartWait = oldWriter.restartWait;
@@ -101,10 +100,10 @@ WebsocketServerWriter.prototype.startWebsocketServer = function() {
     if (!this.wsServer) {
         this.wsClients = [];
         this.wsServer = new ws.Server({host: this.serverOptions.ip, port: this.serverOptions.port});
-        this.wsServer.on('error', this.onWSServerError.bind(this, this.wsServer));
         log('Websocket server is listening on', [this.serverOptions.ip, this.serverOptions.port].join(':'));
         //todo: if this crashes we should try to restart it?
     }
+    this.wsServer.removeAllListeners('error').on('error', this.onWSServerError.bind(this, this.wsServer));
     this.wsServer.removeAllListeners('connection').on('connection', this.onNewWSClient.bind(this, this.wsServer));
 };
 WebsocketServerWriter.prototype.onNewWSClient = function(server, client) {
@@ -157,7 +156,6 @@ WebsocketServerWriter.prototype.startInternalServer = function() {
     if (!this.internalServer) {
         this.internalServer = new portluck.Server();
         this.internalServer.timeout = 0;
-        this.internalServer.on('message', this.broadcastMessage.bind(this));
         this.internalServer.on('error', this.emitInternalServerEvent.bind(this, this.internalServer, 'error'));
         this.internalServer.listen(this.internalPort, '127.0.0.1', function() {
             log('Internal server is listening on port', this.internalPort);
@@ -165,6 +163,7 @@ WebsocketServerWriter.prototype.startInternalServer = function() {
         }.bind(this));
         //todo: if this crashes we should try to restart it? (just do that when we can autogenerate ports)
     }
+    this.internalServer.removeAllListeners('error').on('error', this.emitInternalServerEvent.bind(this, this.internalServer, 'error'));
     this.internalServer.removeAllListeners('message').on('message', this.broadcastMessage.bind(this));
 };
 WebsocketServerWriter.prototype.emitInternalServerEvent = function(server) {
