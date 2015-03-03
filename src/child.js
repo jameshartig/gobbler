@@ -165,7 +165,7 @@ Child.prototype.onClientDisconnect = function(socket) {
 Child.prototype.onClientMessage = function(message, socket, writer) {
     var ip = socket._remoteAddress,
         now = Date.now(),
-        err;
+        err, additionalWriters;
     if (this.messagesPerIP[ip] === undefined) {
         this.messagesPerIP[ip] = this.pool.get();
     }
@@ -180,13 +180,16 @@ Child.prototype.onClientMessage = function(message, socket, writer) {
     EntryPool.addEntry(this.messagesPerIP[ip], now);
     messageOptions.ip = ip;
     messageOptions.timestamp = now;
-    err = this.writeMessage(message, messageOptions);
-    if (!err || this.clientLogLevel < 1) {
+    if (this.clientLogLevel > 2) {
+        additionalWriters = [writer];
+    }
+    err = this.writeMessage(message, messageOptions, additionalWriters);
+    if (!err) {
         return;
     }
     if (this.clientLogLevel > 1) {
         writer.write(err.message + "\n");
-    } else {
+    } else if (this.clientLogLevel > 0) {
         writer.write(_INVALID_PAYLOAD_);
     }
 };

@@ -131,7 +131,7 @@ WriterHandler.prototype.setFormatters = function(formatters) {
 WriterHandler.prototype.setWriters = function(writers) {
     this.writers = this._reloadWriters(writers);
 };
-WriterHandler.prototype.writeMessage = function(msg, options) {
+WriterHandler.prototype.writeMessage = function(msg, options, additionalWriters) {
     var message = msg,
         lastFormatter = '?',
         i;
@@ -151,6 +151,11 @@ WriterHandler.prototype.writeMessage = function(msg, options) {
     }
     for (i = 0; i < this.writers.length; i++) {
         this.writers[i].write(message);
+    }
+    if (Array.isArray(additionalWriters)) {
+        for (i = 0; i < additionalWriters.length; i++) {
+            additionalWriters[i].write(message);
+        }
     }
     return null;
 };
