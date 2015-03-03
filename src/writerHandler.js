@@ -147,6 +147,9 @@ WriterHandler.prototype.writeMessage = function(msg, options, additionalWriters)
         }
     }
     if (typeof message !== 'string' && !(message instanceof Buffer)) {
+        if (typeof message.toMessage === 'function') {
+            message = message.toMessage();
+        }
         message = message.toString();
     }
     for (i = 0; i < this.writers.length; i++) {

@@ -1,4 +1,5 @@
-var _parent = this;
+var BaseObjectMessage = require('./base'),
+    _parent = this;
 function JSONMessage(string) {
     if (string instanceof Buffer) {
         this.string = string.toString();
@@ -17,17 +18,33 @@ JSONMessage.getInstance = function(parent) {
     }
     return parent._JSONMessageInstance;
 };
-JSONMessage.prototype.overwrite = function(string) {
-    JSONMessage.prototype.constructor.call(this, string);
+JSONMessage.prototype._type = 'JSONMessage';
+JSONMessage.prototype.overwrite = function(obj) {
+    if (typeof obj === 'string' || obj === undefined) {
+        JSONMessage.prototype.constructor.call(this, obj);
+        return this;
+    }
+    if (typeof obj.toObject === 'function') {
+        obj = obj.toObject();
+    }
+    if (typeof obj !== 'object' || (obj.constructor && obj.constructor !== Object)) {
+        if (obj instanceof Buffer) {
+            JSONMessage.prototype.constructor.call(this, obj.toString());
+            return this;
+        }
+        throw new TypeError('Invalid object sent to JSONMessage.overwrite: ' + obj.constructor);
+    }
+    this._invalidString = true;
+    this.obj = obj;
     return this;
 };
 //extend the object with plain objects only
 JSONMessage.prototype.extend = function(obj) {
-    if (obj instanceof JSONMessage) {
+    if (obj.toObject === 'function') {
         obj = obj.toObject();
     }
     if (typeof obj !== 'object' || (obj.constructor && obj.constructor !== Object)) {
-        throw new TypeError('Invalid object sent to JSONMessage.extend');
+        throw new TypeError('Invalid object sent to JSONMessage.extend: ' + obj.constructor);
     }
     this._invalidString = true;
     for (var key in obj) {
@@ -40,8 +57,20 @@ JSONMessage.prototype.extend = function(obj) {
 JSONMessage.prototype.has = function(key) {
     return (this.obj.hasOwnProperty(key) && this.obj[key] !== undefined);
 };
+JSONMessage.prototype.unset = function(key) {
+    if (this.has(key)) {
+        this.obj[key] = undefined;
+        this._invalidString = true;
+    }
+};
 JSONMessage.prototype.get = function(key) {
     return this.obj[key];
+};
+JSONMessage.prototype.set = function(key, val) {
+    if (this.obj[key] !== val) {
+        this.obj[key] = val;
+        this._invalidString = true;
+    }
 };
 JSONMessage.prototype.append = function(toAppend, reset) {
     if (typeof toAppend !== 'string') {
@@ -61,6 +90,17 @@ JSONMessage.prototype.toString = function() {
 };
 JSONMessage.prototype.toObject = function() {
     return this.obj;
+};
+JSONMessage.prototype.toMessage = function() {
+    //we are a valid message so return this
+    return this;
+};
+JSONMessage.prototype.forEach = function(func) {
+    for (var key in this.obj) {
+        if (this.obj.hasOwnProperty(key) && this.obj[key] !== 'undefined') {
+            func(this.obj[key], key, this);
+        }
+    }
 };
 
 module.exports = JSONMessage;

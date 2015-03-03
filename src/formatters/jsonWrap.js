@@ -1,4 +1,5 @@
-var JSONMessage = require('../messages/json');
+var JSONMessage = require('../messages/json'),
+    BaseObjectMessage = require('../messages/base');
 
 function JSONWrapFormatter(options) {
     this.key = (options && options.key) || 'msg';
@@ -8,16 +9,19 @@ JSONWrapFormatter.prototype.format = function(msg, messageOptions) {
     var message = msg,
         obj = (this.includeOpts && messageOptions) || {},
         result;
-    if (message instanceof JSONMessage) {
-        message = message.toObject();
-    } else {
-        if (message instanceof Buffer) {
-            message = message.toString();
-        }
+    if (message instanceof Buffer) {
+        message = message.toString();
+    } else if (typeof message !== 'string') {
+        message = BaseObjectMessage.getMessage(message).toObject();
     }
-    obj[this.key] = message;
-    result = JSONMessage.getInstance(module).overwrite().extend(obj);
-    obj[this.key] = undefined;
+    try {
+        obj[this.key] = message;
+        result = JSONMessage.getInstance(module).overwrite().extend(obj);
+    } catch (e) {
+        throw e;
+    } finally {
+        obj[this.key] = undefined;
+    }
     return result;
 };
 module.exports = JSONWrapFormatter;

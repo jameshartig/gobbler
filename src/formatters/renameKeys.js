@@ -1,4 +1,4 @@
-var JSONMessage = require('../messages/json');
+var BaseObjectMessage = require('../messages/base');
 
 function renameHelper(rules, obj, overwrite/*, origObj*/) {
     if (typeof obj !== 'object' || !rules) {
@@ -45,31 +45,12 @@ function RenameKeysFormatter(options) {
     this.overwrite = options.overwrite || false;
 }
 RenameKeysFormatter.prototype.format = function(msg, messageOptions) {
-    var obj = msg,
-        typeBefore = 'Object',
-        result;
-    if (msg instanceof JSONMessage) {
-        typeBefore = 'JSONMessage';
-        obj = msg.toObject();
-    }
-    if (obj.constructor && obj.constructor !== Object) {
-        throw new TypeError('Invalid object sent to RenameKeysFormatter: ' + obj.constructor);
-    }
-    renameHelper(this.rules, messageOptions);
-    if (!renameHelper(this.rules, obj)) {
+    var obj = BaseObjectMessage.getMessage(msg),
+        rawObject = obj.toObject();
+    if (!renameHelper(this.rules, rawObject)) {
         return msg;
     }
-    switch (typeBefore) {
-        case 'JSONMessage':
-            result = msg.overwrite().extend(obj);
-            break;
-        case 'Object':
-            result = obj;
-            break;
-        default:
-            throw new Error('Invalid object received after renaming in RenameKeysFormatter: ' + typeBefore);
-            break;
-    }
-    return result;
+    obj.overwrite(rawObject);
+    return obj.toMessage();
 };
 module.exports = RenameKeysFormatter;
