@@ -1,4 +1,4 @@
-var BaseObjectMessage = require('../messages/base');
+var BaseObjectMessage = global.BaseObjectMessage;
 
 function ValidKeysFormatter(options) {
     if (!options || !options.keys || !Array.isArray(options.keys)) {

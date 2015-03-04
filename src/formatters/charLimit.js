@@ -8,6 +8,9 @@ CharLimitFormatter.prototype.format = function(msg) {
             message = message.slice(0, this.limit);
         }
     } else {
+        if (typeof message !== 'string') {
+            throw new TypeError('Message must be a string or buffer for CharLimitFormatter');
+        }
         if (message.length > this.limit) {
             message = message.substr(0, this.limit);
         }

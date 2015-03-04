@@ -3,8 +3,9 @@ var events = require('events'),
     path = require('path'),
     crc32 = require('crc32'),
     reload = require('require-reload')(require),
-    log = require('./log.js'),
-    JSONMessage = reload('./messages/json');
+    log = require('./log.js');
+global.BaseObjectMessage = reload('./messages/base');
+global.JSONMessage = reload('./messages/json');
 
 function WriterHandler(oldHandler) {
     events.EventEmitter.call(this);
@@ -59,6 +60,8 @@ WriterHandler.prototype._reloadWriters = function(writers) {
     for (i = 0; i < this.writers.length; i++) {
         writersByCRC[this.writers[i].configCRC] = this.writers[i];
     }
+    global.BaseObjectMessage = reload('./messages/base');
+    global.JSONMessage = reload('./messages/json');
     for (i = 0; i < writers.length; i++) {
         if (!writers[i].constructor || writers[i].constructor === Object) {
             config = writers[i];

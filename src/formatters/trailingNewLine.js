@@ -1,4 +1,4 @@
-var JSONMessage = require('../messages/json'),
+var JSONMessage = global.JSONMessage,
     _LF_ = "\n",
     _LF_BUF_ = new Buffer(_LF_);
 

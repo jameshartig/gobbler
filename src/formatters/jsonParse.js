@@ -1,4 +1,4 @@
-var JSONMessage = require('../messages/json');
+var JSONMessage = global.JSONMessage;
 
 function JSONParseFormatter() {}
 JSONParseFormatter.prototype.format = function(msg) {

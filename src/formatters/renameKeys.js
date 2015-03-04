@@ -1,4 +1,4 @@
-var BaseObjectMessage = require('../messages/base');
+var BaseObjectMessage = global.BaseObjectMessage;
 
 function renameHelper(rules, obj, overwrite/*, origObj*/) {
     if (typeof obj !== 'object' || !rules) {

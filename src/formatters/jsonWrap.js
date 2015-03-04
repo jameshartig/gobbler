@@ -1,5 +1,5 @@
-var JSONMessage = require('../messages/json'),
-    BaseObjectMessage = require('../messages/base');
+var BaseObjectMessage = global.BaseObjectMessage,
+    JSONMessage = global.JSONMessage;
 
 function JSONWrapFormatter(options) {
     this.key = (options && options.key) || 'msg';

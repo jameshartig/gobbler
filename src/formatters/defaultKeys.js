@@ -1,4 +1,4 @@
-var BaseObjectMessage = require('../messages/base');
+var BaseObjectMessage = global.BaseObjectMessage;
 
 function defaultHelper(rules, obj, overwrite) {
     if (typeof obj !== 'object' || !rules) {
