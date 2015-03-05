@@ -6,7 +6,8 @@ var util = require('util'),
     defaultLimits = {
         persistantConns: 10,
         messages: 100,
-        messagesTimeframe: 60
+        messagesTimeframe: 60,
+        initialPoolSize: 100
     },
     idleTimeout = 5 * 1000,
     messageOptions = {},
@@ -26,6 +27,7 @@ function Child(oldChild) {
         this.connectionsPerIP = oldChild.connectionsPerIP;
         this.messagesPerIP = oldChild.messagesPerIP;
         this.maxConnectionsAllowed = oldChild.maxConnectionsAllowed;
+        this.disableClientLimits = oldChild.disableClientLimits;
         this.pool = oldChild.pool;
         this.formatters = oldChild.formatters;
         this.maxMessagesAllowed = oldChild.maxMessagesAllowed;
@@ -40,6 +42,8 @@ function Child(oldChild) {
         this.messagesPerIP = {};
         this.role = '';
         this.clientLogLevel = 0;
+        this.pool = null;
+        this.disableClientLimits = false;
     }
 }
 util.inherits(Child, WriterHandler);
@@ -60,11 +64,14 @@ Child.prototype.start = function() {
     this.startWriters();
 };
 Child.prototype.createPool = function(initialSize) {
-    if (this.pool) {
+    if (this.pool || this.disableClientLimits) {
         return;
     }
-    var size = initialSize || 500;
-    this.pool = new EntryPool(size, Math.max(this.maxConnectionsAllowed, this.maxMessagesAllowed));
+    var size = initialSize;
+    if ((!size || size < 1) && this.config != null) {
+        size = this.config.limits.initialPoolSize;
+    }
+    this.pool = new EntryPool(Math.max(5, size), Math.max(this.maxConnectionsAllowed, this.maxMessagesAllowed));
     this.startGCInterval();
 };
 Child.prototype.startGCInterval = function() {
@@ -74,25 +81,47 @@ Child.prototype.startGCInterval = function() {
     //loop and garbage collect old message counts
     this.gc = setInterval(this.runGC.bind(this), 60 * 1000);
 };
+
+Child.prototype.checkDisablePool = function() {
+    if (this.maxConnectionsAllowed === 0 && this.maxMessagesAllowed === 0) {
+        this.disableClientLimits = true;
+        this.flushTrackedConnections();
+        this.flushTrackedMessages();
+        this.pool = null;
+    } else {
+        this.disableClientLimits = false;
+        if (this.started) {
+            this.createPool();
+        }
+    }
+};
 Child.prototype.setMaxConnectionsAllowed = function(newValue) {
     newValue = Number(newValue);
-    if (!newValue || newValue < 1 || newValue > this.maxConnectionsAllowed) {
+    if (isNaN(newValue) || newValue < 0 || newValue > this.maxConnectionsAllowed) {
         return false;
     }
+    if (newValue > 9999) {
+        throw new Error('persistantConns is too large. Try something smaller than 10k');
+    }
     this.maxConnectionsAllowed = newValue;
+    this.checkDisablePool();
     return true;
 };
 Child.prototype.setMaxMessagesAllowed = function(newValue) {
     newValue = Number(newValue);
-    if (!newValue || newValue < 1 || newValue > this.maxMessagesAllowed) {
+    if (isNaN(newValue) || newValue < 0 || newValue > this.maxMessagesAllowed) {
         return false;
     }
+    if (newValue > 99999) {
+        throw new Error('persistantConns is too large. Try something smaller than 100k');
+    }
     this.maxMessagesAllowed = newValue;
+    this.checkDisablePool();
     return true;
 };
 Child.prototype.setMaxMessagesTimeframe = function(newValue) {
     newValue = Number(newValue);
-    if (!newValue || newValue < 1 || newValue > this.maxMessagesTimeframe) {
+    if (!newValue || newValue < 0 || newValue > this.maxMessagesTimeframe) {
         return false;
     }
     this.maxMessagesTimeframe = newValue * 60;
@@ -112,14 +141,18 @@ Child.prototype.setClientLogLevel = function(level) {
     return true;
 };
 Child.prototype.flushTrackedConnections = function() {
-    for (var ip in this.connectionsPerIP) {
-        this.pool.put(this.connectionsPerIP[ip]);
+    if (this.pool !== null) {
+        for (var ip in this.connectionsPerIP) {
+            this.pool.put(this.connectionsPerIP[ip]);
+        }
     }
     this.connectionsPerIP = {};
 };
 Child.prototype.flushTrackedMessages = function() {
-    for (var ip in this.messagesPerIP) {
-        this.pool.put(this.messagesPerIP[ip]);
+    if (this.pool !== null) {
+        for (var ip in this.messagesPerIP) {
+            this.pool.put(this.messagesPerIP[ip]);
+        }
     }
     this.messagesPerIP = {};
 };
@@ -135,29 +168,35 @@ Child.prototype.onClientConnect = function(socket) {
     //node removes the ip when it disconnects which means we can't get the ip after close
     socket._remoteAddress = ip;
     socket._tsConnected = now;
-    if (this.connectionsPerIP[ip] === undefined) {
-        this.connectionsPerIP[ip] = this.pool.get();
-    } else {
-        if (EntryPool.numEntries(this.connectionsPerIP[ip]) >= this.maxConnectionsAllowed) {
-            socket.end();
-            return;
+    if (!this.disableClientLimits) {
+        if (this.connectionsPerIP[ip] === undefined) {
+            this.connectionsPerIP[ip] = this.pool.get();
+        } else {
+            if (EntryPool.numEntries(this.connectionsPerIP[ip]) >= this.maxConnectionsAllowed) {
+                socket.end();
+                return;
+            }
         }
+        //remove any entries from more than 5 minutes ago
+        EntryPool.addEntry(this.connectionsPerIP[ip], now);
     }
-    //remove any entries from more than 5 minutes ago
-    EntryPool.addEntry(this.connectionsPerIP[ip], now);
 };
 Child.prototype.onClientDisconnect = function(socket) {
     var ip = socket._remoteAddress,
         now = Date.now();
     if (this.connectionsPerIP[ip] !== undefined) {
         if (EntryPool.removeEntry(this.connectionsPerIP[ip], socket._tsConnected)) {
-            this.pool.put(this.connectionsPerIP[ip]);
+            if (this.pool !== null) {
+                this.pool.put(this.connectionsPerIP[ip]);
+            }
             delete this.connectionsPerIP[ip];
         }
     }
     if (this.messagesPerIP[ip] !== undefined) {
         if (EntryPool.cleanupEntries(this.messagesPerIP[ip], now - this.maxMessagesTimeframe)) {
-            this.pool.put(this.messagesPerIP[ip]);
+            if (this.pool !== null) {
+                this.pool.put(this.messagesPerIP[ip]);
+            }
             delete this.messagesPerIP[ip];
         }
     }
@@ -166,18 +205,20 @@ Child.prototype.onClientMessage = function(message, socket, writer) {
     var ip = socket._remoteAddress,
         now = Date.now(),
         err, additionalWriters;
-    if (this.messagesPerIP[ip] === undefined) {
-        this.messagesPerIP[ip] = this.pool.get();
-    }
-    if (EntryPool.numEntries(this.messagesPerIP[ip]) >= this.maxMessagesAllowed) {
-        log('dropping message from', ip);
-        if (this.clientLogLevel > 1) {
-            writer.write(_RATE_LIMITED_);
+    if (!this.disableClientLimits) {
+        if (this.messagesPerIP[ip] === undefined) {
+            this.messagesPerIP[ip] = this.pool.get();
         }
-        return;
+        if (EntryPool.numEntries(this.messagesPerIP[ip]) >= this.maxMessagesAllowed) {
+            log('dropping message from', ip);
+            if (this.clientLogLevel > 1) {
+                writer.write(_RATE_LIMITED_);
+            }
+            return;
+        }
+        //remove any entries
+        EntryPool.addEntry(this.messagesPerIP[ip], now);
     }
-    //remove any entries
-    EntryPool.addEntry(this.messagesPerIP[ip], now);
     messageOptions.ip = ip;
     messageOptions.timestamp = now;
     if (this.clientLogLevel > 2) {
@@ -197,7 +238,9 @@ Child.prototype.runGC = function() {
     var cleanupIfBefore = Date.now() - this.maxMessagesTimeframe;
     for (var ip in this.messagesPerIP) {
         if (EntryPool.cleanupEntries(this.messagesPerIP[ip], cleanupIfBefore)) {
-            this.pool.put(this.messagesPerIP[ip]);
+            if (this.pool !== null) {
+                this.pool.put(this.messagesPerIP[ip]);
+            }
             delete this.messagesPerIP[ip];
         }
     }
@@ -266,7 +309,7 @@ Child.prototype.setConfig = function(config) {
         config.limits = {};
     }
     for (name in defaultLimits) {
-        if (defaultLimits.hasOwnProperty(name) && !config.limits[name]) {
+        if (defaultLimits.hasOwnProperty(name) && !config.limits.hasOwnProperty(name)) {
             config.limits[name] = defaultLimits[name];
         }
     }
