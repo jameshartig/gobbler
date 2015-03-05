@@ -13,6 +13,8 @@ function onExit(error) {
     }
     process.exit();
 }
+//since each of our children are going to be listening on all 3 of these raise the max listeners limit
+process.setMaxListeners(32);
 process.on('exit', onExit);
 process.on('SIGTERM', onExit);
 process.on('SIGINT', onExit);
