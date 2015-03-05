@@ -1,6 +1,6 @@
 {
   "name": "gobbler",
-  "version": "0.0.2-beta.3",
+  "version": "0.0.2-beta.4",
   "description": "Simple server that listens for data and forwards it somewhere",
   "main": "run.js",
   "repository": {
@@ -15,7 +15,7 @@
     "delimiterstream": "alpha",
     "entrypool": "^0.1.0",
     "flags": "^0.1.3",
-    "portluck": "~0",
+    "portluck": ">=0.0.3 <1.0.0",
     "posix": "^2.0.0",
     "require-reload": "^0.2.2",
     "ringbufferjs": "~0",
