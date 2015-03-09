@@ -232,13 +232,15 @@ Child.prototype.onClientMessage = function(message, socket, writer) {
         additionalWriters = [writer];
     }
     err = this.writeMessage(message, messageOptions, additionalWriters);
-    if (!err) {
-        return;
+    if (err) {
+        if (this.clientLogLevel > 1) {
+            writer.write(err.message + "\n");
+        } else if (this.clientLogLevel > 0) {
+            writer.write(_INVALID_PAYLOAD_);
+        }
     }
-    if (this.clientLogLevel > 1) {
-        writer.write(err.message + "\n");
-    } else if (this.clientLogLevel > 0) {
-        writer.write(_INVALID_PAYLOAD_);
+    if (!socket.readable) {
+        writer.end();
     }
 };
 Child.prototype.runGC = function() {
