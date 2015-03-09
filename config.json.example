@@ -13,5 +13,6 @@
     "messages": 100,
     "messagesTimeframe": 60
   },
-  "clientLogLevel": 0
+  "clientLogLevel": 0,
+  "portluck": {}
 }

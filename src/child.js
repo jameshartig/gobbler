@@ -36,8 +36,6 @@ function Child(oldChild) {
         clearInterval(oldChild.gc);
         this.startGCInterval();
     } else {
-        this.server = new (reload('portluck')).Server();
-        this.server.timeout = idleTimeout;
         this.connectionsPerIP = {};
         this.messagesPerIP = {};
         this.role = '';
@@ -163,6 +161,9 @@ Child.prototype.flushTrackedMessages = function() {
     this.messagesPerIP = {};
 };
 Child.prototype.setupServerListeners = function() {
+    if (!this.server) {
+        return;
+    }
     this.server.removeAllListeners('clientConnect').on('clientConnect', this.onClientConnect.bind(this));
     this.server.removeAllListeners('clientDisconnect').on('clientDisconnect', this.onClientDisconnect.bind(this));
     this.server.removeAllListeners('message').on('message', this.onClientMessage.bind(this));
@@ -255,14 +256,27 @@ Child.prototype.onServerError = function(error) {
     log('Error listening to port!', error);
 };
 Child.prototype.onServerHandle = function(handle) {
-    var server = this.server;
-    if (server.listening) {
+    var server = this.server,
+        obj, err;
+    if (server && server.listening) {
         log('Cannot set the handle again for a server');
         return;
     }
-    var obj = {},
-        err = handle.getsockname(obj);
-    //via https://github.com/joyent/node/issues/2721 (and well actually via net.js:1173
+    if (!server) {
+        if (!this.config) {
+            throw new Error('Cannot start portluck server without a config');
+        }
+        server = new (reload('portluck')).Server(this.config.portluck);
+        if (!this.config.portluck || this.config.portluck.timeout === undefined) {
+            server.timeout = idleTimeout;
+        }
+        this.server = server;
+        this.setupServerListeners();
+    }
+    //must sent an empty object to getsockname to get result on
+    obj = {};
+    err = handle.getsockname(obj);
+    //via https://github.com/joyent/node/issues/2721 (and well actually via net.js:1173)
     if (this.config && this.config.port && err === 0 && obj.port != this.config.port) {
         throw new Error('Server port is already in use ' + this.config.port, 'EADDRINUSE');
     }
