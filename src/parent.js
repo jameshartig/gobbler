@@ -140,7 +140,6 @@ Parent.prototype.onChildMessage = function(child, responseSocket, waitingMessage
             }
             break;
         case 'd': //child shutdown
-            delete this.childrenByID[id];
             response = 'Child ' + id + ' has been stopped!';
             break;
         case 'e': //connection count
