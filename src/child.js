@@ -63,6 +63,12 @@ Child.prototype.start = function() {
     this.createPool();
     this.startWriters();
 };
+Child.prototype.stop = function() {
+    if (!this.started) {
+        return;
+    }
+    this.stopWriters();
+};
 Child.prototype.createPool = function(initialSize) {
     if (this.pool || this.disableClientLimits) {
         return;

@@ -95,7 +95,7 @@ Parent.prototype.spawnChild = function(responseSocket) {
     var now = Date.now(),
         childFilename = path.resolve(path.dirname(process.mainModule.filename), './startChild.js'),
         child;
-    if (EntryPool.cleanupEntries(this.crashedTimes, (now - 5000)) === this.crashedTimes.length) {
+    if (EntryPool.cleanupEntries(this.crashedTimes, (now - 5000)) >= this.crashedTimes.length) {
         log('Children are crashing too quickly. Dying...');
         process.exit();
         return;
@@ -272,6 +272,7 @@ Parent.prototype.onControlCommand = function(command, commandArgs, socket) {
 };
 Parent.prototype.stop = function() {
     this.stopChildren();
+    this.stopWriters();
 };
 
 Parent.prototype.start = function() {

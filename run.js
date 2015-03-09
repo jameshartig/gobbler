@@ -8,16 +8,15 @@ var log = require('./src/log.js'),
 function onExit(error) {
     currentParent.stop();
     ctrl.end();
-    if (error) {
-        throw e;
+    if (error instanceof Error) {
+        throw error;
     }
-    process.exit();
 }
 //since each of our children are going to be listening on all 3 of these raise the max listeners limit
 process.setMaxListeners(32);
 process.on('exit', onExit);
-process.on('SIGTERM', onExit);
-process.on('SIGINT', onExit);
+process.once('SIGTERM', process.exit.bind(process, 0));
+process.once('SIGINT', process.exit.bind(process, 0));
 
 //we gotta first strip the command otherwise flags will complain
 ctrl.strip();

@@ -12,14 +12,13 @@ function onExit(error) {
     if (process.connected) {
         process.send('d');
     }
-    if (error) {
+    if (error instanceof Error) {
         throw error;
     }
-    process.exit();
 }
 process.on('exit', onExit);
-process.on('SIGINT', onExit);
-process.on('SIGTERM', onExit);
+process.once('SIGTERM', process.exit.bind(process, 0));
+process.once('SIGINT', process.exit.bind(process, 0));
 
 process.on('SIGHUP', function() {
     var status = 'unknown';
