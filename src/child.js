@@ -166,6 +166,7 @@ Child.prototype.setupServerListeners = function() {
     }
     this.server.removeAllListeners('clientConnect').on('clientConnect', this.onClientConnect.bind(this));
     this.server.removeAllListeners('clientDisconnect').on('clientDisconnect', this.onClientDisconnect.bind(this));
+    this.server.removeAllListeners('clientError').on('clientError', this.onClientError.bind(this));
     this.server.removeAllListeners('message').on('message', this.onClientMessage.bind(this));
     this.server.removeAllListeners('error').on('error', this.onServerError.bind(this));
 };
@@ -243,6 +244,9 @@ Child.prototype.onClientMessage = function(message, socket, writer) {
         writer.end();
     }
 };
+Child.prototype.onClientError = function(error) {
+    log('Error from client', error);
+};
 Child.prototype.runGC = function() {
     var cleanupIfBefore = Date.now() - this.maxMessagesTimeframe;
     for (var ip in this.messagesPerIP) {
@@ -256,6 +260,7 @@ Child.prototype.runGC = function() {
 };
 Child.prototype.onServerError = function(error) {
     log('Error listening to port!', error);
+    process.exit();
 };
 Child.prototype.onServerHandle = function(handle) {
     var server = this.server,
