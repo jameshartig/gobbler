@@ -245,6 +245,10 @@ Child.prototype.onClientMessage = function(message, socket, writer) {
     }
 };
 Child.prototype.onClientError = function(error) {
+    //ignore common reset errors
+    if (error === 'ECONNRESET' || ((error instanceof Error) && error.code === 'ECONNRESET')) {
+        return;
+    }
     log('Error from client', error);
 };
 Child.prototype.runGC = function() {
