@@ -33,8 +33,10 @@ function Child(oldChild) {
         this.maxMessagesAllowed = oldChild.maxMessagesAllowed;
         this.maxMessagesTimeframe = oldChild.maxMessagesTimeframe;
         this.clientLogLevel = oldChild.clientLogLevel || 0;
-        clearInterval(oldChild.gc);
-        this.startGCInterval();
+        if (oldChild.gc) {
+            this.gc = oldChild.gc;
+            this.startGCInterval();
+        }
     } else {
         this.connectionsPerIP = {};
         this.messagesPerIP = {};
@@ -42,6 +44,7 @@ function Child(oldChild) {
         this.clientLogLevel = 0;
         this.pool = null;
         this.disableClientLimits = false;
+        this.gc = null;
     }
 }
 util.inherits(Child, WriterHandler);
@@ -201,7 +204,7 @@ Child.prototype.onClientDisconnect = function(socket) {
         }
     }
     if (this.messagesPerIP[ip] !== undefined) {
-        if (EntryPool.cleanupEntries(this.messagesPerIP[ip], now - this.maxMessagesTimeframe)) {
+        if (EntryPool.cleanupEntries(this.messagesPerIP[ip], now - this.maxMessagesTimeframe) === 0) {
             if (this.pool !== null) {
                 this.pool.put(this.messagesPerIP[ip]);
             }
@@ -254,13 +257,14 @@ Child.prototype.onClientError = function(error) {
 Child.prototype.runGC = function() {
     var cleanupIfBefore = Date.now() - this.maxMessagesTimeframe;
     for (var ip in this.messagesPerIP) {
-        if (EntryPool.cleanupEntries(this.messagesPerIP[ip], cleanupIfBefore)) {
+        if (EntryPool.cleanupEntries(this.messagesPerIP[ip], cleanupIfBefore) === 0) {
             if (this.pool !== null) {
                 this.pool.put(this.messagesPerIP[ip]);
             }
             delete this.messagesPerIP[ip];
         }
     }
+    //todo: we should somehow garbage collection connectionsPerIP based on gobbler timeout
 };
 Child.prototype.onServerError = function(error) {
     log('Error listening to port!', error);
