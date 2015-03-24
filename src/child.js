@@ -136,9 +136,7 @@ Child.prototype.setMaxMessagesTimeframe = function(newValue) {
 };
 Child.prototype.setRole = function(role) {
     this.role = role;
-    if (role) {
-        messageOptions.role = role;
-    } else {
+    if (!role) {
         delete messageOptions.role;
     }
     return true;
@@ -232,6 +230,7 @@ Child.prototype.onClientMessage = function(message, socket, writer) {
     }
     messageOptions.ip = ip;
     messageOptions.timestamp = now;
+    messageOptions.role = this.role;
     if (this.clientLogLevel > 2) {
         additionalWriters = [writer];
     }
