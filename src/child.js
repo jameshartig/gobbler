@@ -191,7 +191,7 @@ Child.prototype.onClientConnect = function(writer, socket) {
     }
 };
 Child.prototype.onClientDisconnect = function(socket) {
-    var ip = socket._remoteAddress,
+    var ip = socket.remoteAddress || socket._remoteAddress,
         now = Date.now();
     if (this.connectionsPerIP[ip] !== undefined) {
         if (EntryPool.removeEntry(this.connectionsPerIP[ip], socket._tsConnected)) {
@@ -211,7 +211,7 @@ Child.prototype.onClientDisconnect = function(socket) {
     }
 };
 Child.prototype.onClientMessage = function(message, writer, socket) {
-    var ip = socket._remoteAddress,
+    var ip = socket.remoteAddress || socket._remoteAddress,
         now = Date.now(),
         err, additionalWriters;
     if (!this.disableClientLimits) {
