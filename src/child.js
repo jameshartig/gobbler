@@ -171,7 +171,7 @@ Child.prototype.setupServerListeners = function() {
     this.server.removeAllListeners('message').on('message', this.onClientMessage.bind(this));
     this.server.removeAllListeners('error').on('error', this.onServerError.bind(this));
 };
-Child.prototype.onClientConnect = function(socket) {
+Child.prototype.onClientConnect = function(writer, socket) {
     var ip = socket.remoteAddress,
         now = Date.now();
     //node removes the ip when it disconnects which means we can't get the ip after close
@@ -210,7 +210,7 @@ Child.prototype.onClientDisconnect = function(socket) {
         }
     }
 };
-Child.prototype.onClientMessage = function(message, socket, writer) {
+Child.prototype.onClientMessage = function(message, writer, socket) {
     var ip = socket._remoteAddress,
         now = Date.now(),
         err, additionalWriters;
@@ -241,9 +241,6 @@ Child.prototype.onClientMessage = function(message, socket, writer) {
         } else if (this.clientLogLevel > 0) {
             writer.write(_INVALID_PAYLOAD_);
         }
-    }
-    if (!socket.readable) {
-        writer.end();
     }
 };
 Child.prototype.onClientError = function(error) {
