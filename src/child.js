@@ -329,7 +329,7 @@ Child.prototype.onClientError = function(error, socket) {
     //ignore common reset errors
     if (!(error instanceof Error) || error.code !== 'ECONNRESET') {
         if (ip) {
-            this.logIPMessage('socket_error ' + error.message, ip, '', 0);
+            this.logIPMessage('socket_error ' + (error.message || error.code), ip, '', 0);
         }
     }
     //we must destroy the socket on our own since we removed clientError listener from gobbler server
