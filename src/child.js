@@ -327,9 +327,9 @@ Child.prototype.onClientMessage = function(message, writer, socket) {
 Child.prototype.onClientError = function(error, socket) {
     var ip = socket.remoteAddress || socket._remoteAddress;
     //ignore common reset errors
-    if (!(error instanceof Error) || error.code !== 'ECONNRESET') {
+    if (error && error.code !== 'ECONNRESET') {
         if (ip) {
-            this.logIPMessage('socket_error ' + (error.message || error.code), ip, '', 0);
+            this.logIPMessage('socket_error ' + (error.message || error.code || error), ip, '', 0);
         }
     }
     //we must destroy the socket on our own since we removed clientError listener from gobbler server
