@@ -3,9 +3,14 @@ var events = require('events'),
     path = require('path'),
     crc32 = require('crc32'),
     reload = require('require-reload')(require),
-    log = require('./log.js');
+    log = require('./log.js'),
+    arrayForFormatterError = new Array(3),
+    _SPACE_ = ' ';
 global.BaseObjectMessage = reload('./messages/base');
 global.JSONMessage = reload('./messages/json');
+
+//only need to set this once
+arrayForFormatterError[0] = 'formatting_error via';
 
 function WriterHandler(oldHandler) {
     events.EventEmitter.call(this);
@@ -134,6 +139,7 @@ WriterHandler.prototype.setFormatters = function(formatters) {
 WriterHandler.prototype.setWriters = function(writers) {
     this.writers = this._reloadWriters(writers);
 };
+//returns string error if failed
 WriterHandler.prototype.writeMessage = function(msg, options, additionalWriters) {
     var message = msg,
         lastFormatter = '?',
@@ -145,8 +151,10 @@ WriterHandler.prototype.writeMessage = function(msg, options, additionalWriters)
                 message = this.formatters[i].format(message, options);
             }
         } catch (e) {
-            log('Error formatting message from', lastFormatter, ':', e.message);
-            return new Error('formatting_error via ' + lastFormatter + ': ' + e.message, 'formatting_error');
+            //arrayForFormatterError[0] = 'formatting_error via';
+            arrayForFormatterError[1] = lastFormatter + ':';
+            arrayForFormatterError[3] = e.message;
+            return arrayForFormatterError.join(_SPACE_);
         }
     }
     if (typeof message !== 'string' && !(message instanceof Buffer)) {

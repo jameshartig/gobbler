@@ -1,6 +1,6 @@
 {
   "name": "gobbler",
-  "version": "0.0.5-beta.3",
+  "version": "0.0.6-beta.0",
   "description": "Simple server that listens for data and forwards it somewhere",
   "main": "run.js",
   "repository": {

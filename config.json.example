@@ -14,5 +14,7 @@
     "messagesTimeframe": 60
   },
   "clientLogLevel": 0,
-  "portluck": {}
+  "portluck": {
+    "timeout": 60000
+  }
 }
