@@ -206,7 +206,7 @@ Child.prototype.setupServerListeners = function() {
     this.server.removeAllListeners('message').on('message', this.onClientMessage.bind(this));
     this.server.removeAllListeners('error').on('error', this.onServerError.bind(this));
 };
-Child.prototype.logIPRateLimitExceeded = function(logMessage, ip, sentMessage, cachedNow) {
+Child.prototype.logIPMessage = function(logMessage, ip, sentMessage, cachedNow) {
     if (this.disableClientLimits) {
         return;
     }
@@ -249,7 +249,7 @@ Child.prototype.onClientConnect = function(writer, socket) {
         } else {
             numEntries = EntryPool.numEntries(limitArr);
             if (numEntries >= this.maxConnectionsAllowed) {
-                this.logIPRateLimitExceeded('conn_drop from', ip, '', now);
+                this.logIPMessage('conn_drop from', ip, '', now);
                 socket.end();
                 return;
             }
@@ -298,7 +298,7 @@ Child.prototype.onClientMessage = function(message, writer, socket) {
         //theoretically we should be doing a cleanupEntries here but we let the GC take care of cleaning up
         numEntries = EntryPool.numEntries(limitArr);
         if (numEntries >= this.maxMessagesAllowed) {
-            this.logIPRateLimitExceeded('msg_drop from', ip, message, now);
+            this.logIPMessage('msg_drop from', ip, message, now);
             if (this.clientLogLevel > 1) {
                 writer.write(_RATE_LIMITED_);
             }
@@ -315,7 +315,7 @@ Child.prototype.onClientMessage = function(message, writer, socket) {
     }
     err = this.writeMessage(message, messageOptions, additionalWriters);
     if (err) {
-        this.logIPRateLimitExceeded(err, ip, message, now);
+        this.logIPMessage(err, ip, message, now);
         if (this.clientLogLevel > 1) {
             arraySocketErrResponse[1] = err;
             writer.write(arraySocketErrResponse.join(''));
@@ -324,12 +324,16 @@ Child.prototype.onClientMessage = function(message, writer, socket) {
         }
     }
 };
-Child.prototype.onClientError = function(error) {
+Child.prototype.onClientError = function(error, socket) {
+    var ip = socket.remoteAddress || socket._remoteAddress;
     //ignore common reset errors
-    if (error === 'ECONNRESET' || ((error instanceof Error) && error.code === 'ECONNRESET')) {
-        return;
+    if (!(error instanceof Error) || error.code !== 'ECONNRESET') {
+        if (ip) {
+            this.logIPMessage('socket_error ' + error.message, ip, '', 0);
+        }
     }
-    log('Error from client', error);
+    //we must destroy the socket on our own since we removed clientError listener from gobbler server
+    socket.destroy();
 };
 Child.prototype.runGC = function() {
     var now = Date.now(),
