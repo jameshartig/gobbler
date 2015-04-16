@@ -15,6 +15,7 @@
   },
   "clientLogLevel": 0,
   "portluck": {
-    "timeout": 60000
+    "timeout": 60000,
+    "messageLimit": 1000000
   }
 }
