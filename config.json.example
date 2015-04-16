@@ -9,7 +9,7 @@
     "trailingNewLine"
   ],
   "limits": {
-    "persistantConns": 10,
+    "persistentConns": 10,
     "messages": 100,
     "messagesTimeframe": 60
   },

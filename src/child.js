@@ -4,7 +4,7 @@ var util = require('util'),
     log = require('./log.js'),
     WriterHandler = reload('./writerHandler.js'),
     defaultLimits = {
-        persistantConns: 10,
+        persistentConns: 10,
         messages: 100,
         messagesTimeframe: 60, //in seconds
         logs: 25, //reset every 5 minutes
@@ -127,7 +127,7 @@ Child.prototype.setMaxConnectionsAllowed = function(newValue) {
         return false;
     }
     if (newValue > 9999) {
-        throw new Error('persistantConns is too large. Try something smaller than 10k');
+        throw new Error('persistentConns is too large. Try something smaller than 10k');
     }
     this.maxConnectionsAllowed = newValue;
     this.checkDisablePool();
@@ -139,7 +139,7 @@ Child.prototype.setMaxMessagesAllowed = function(newValue) {
         return false;
     }
     if (newValue > 99999) {
-        throw new Error('persistantConns is too large. Try something smaller than 100k');
+        throw new Error('persistentConns is too large. Try something smaller than 100k');
     }
     this.maxMessagesAllowed = newValue;
     this.checkDisablePool();
@@ -443,13 +443,16 @@ Child.prototype.setConfig = function(config) {
     if (!config.limits) {
         config.limits = {};
     }
+    if (!config.limits.hasOwnProperty('persistentConns') && config.limits.hasOwnProperty('persistantConns')) {
+        config.limits.persistentConns = config.limits.persistantConns;
+    }
     for (name in defaultLimits) {
         if (defaultLimits.hasOwnProperty(name) && !config.limits.hasOwnProperty(name)) {
             config.limits[name] = defaultLimits[name];
         }
     }
-    if (!this.setMaxConnectionsAllowed(config.limits.persistantConns)) {
-        throw new Error('Cannot set limit of persistantConns. ' + config.limits.persistantConns + ' is either higher than the current value or less than 1');
+    if (!this.setMaxConnectionsAllowed(config.limits.persistentConns)) {
+        throw new Error('Cannot set limit of persistentConns. ' + config.limits.persistentConns + ' is either higher than the current value or less than 1');
     }
     if (!this.setMaxMessagesAllowed(config.limits.messages)) {
         throw new Error('Cannot set limit of messages. ' + config.limits.messages + ' is either higher than the current value or less than 1');
