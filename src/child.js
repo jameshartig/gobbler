@@ -55,12 +55,13 @@ function Child(oldChild) {
         this.role = '';
         this.clientLogLevel = 0;
         this.pool = null;
-        this.disableClientLimits = false;
+        this.disableClientLimits = true;
         this.gc = null;
-        this.maxMessagesAllowed = 100;
+        //cannot set these to defaults until we fix the problem with raising arraySize
+        this.maxMessagesAllowed = 0;
         this.maxMessagesTimeframe = 60 * 1000;
-        this.maxConnectionsAllowed = 10;
-        this.maxLogsAllowed = 10;
+        this.maxConnectionsAllowed = 0;
+        this.maxLogsAllowed = 0;
     }
 }
 util.inherits(Child, WriterHandler);
@@ -123,7 +124,7 @@ Child.prototype.checkDisablePool = function() {
 };
 Child.prototype.setMaxConnectionsAllowed = function(newValue) {
     newValue = Number(newValue);
-    if (isNaN(newValue) || newValue < 0 || newValue > this.maxConnectionsAllowed) {
+    if (isNaN(newValue) || newValue < 0 || (this.maxConnectionsAllowed > 0 && newValue > this.maxConnectionsAllowed)) {
         return false;
     }
     if (newValue > 9999) {
@@ -135,7 +136,7 @@ Child.prototype.setMaxConnectionsAllowed = function(newValue) {
 };
 Child.prototype.setMaxMessagesAllowed = function(newValue) {
     newValue = Number(newValue);
-    if (isNaN(newValue) || newValue < 0 || newValue > this.maxMessagesAllowed) {
+    if (isNaN(newValue) || newValue < 0 || (this.maxMessagesAllowed > 0 && newValue > this.maxMessagesAllowed)) {
         return false;
     }
     if (newValue > 99999) {
@@ -147,7 +148,7 @@ Child.prototype.setMaxMessagesAllowed = function(newValue) {
 };
 Child.prototype.setMaxMessagesTimeframe = function(newValue) {
     newValue = Number(newValue);
-    if (!newValue || newValue < 0 || newValue > this.maxMessagesTimeframe) {
+    if (!newValue || newValue < 0 || (this.maxMessagesTimeframe > 0 && newValue > this.maxMessagesTimeframe)) {
         return false;
     }
     this.maxMessagesTimeframe = newValue * 1000;
@@ -155,7 +156,7 @@ Child.prototype.setMaxMessagesTimeframe = function(newValue) {
 };
 Child.prototype.setMaxLogsAllowed = function(newValue) {
     newValue = Number(newValue);
-    if (!newValue || newValue < 0 || newValue > this.maxLogsAllowed) {
+    if (!newValue || newValue < 0 || (this.maxLogsAllowed > 0 && newValue > this.maxLogsAllowed)) {
         return false;
     }
     this.maxLogsAllowed = newValue;
@@ -221,7 +222,7 @@ Child.prototype.logIPMessage = function(logMessage, ip, sentMessage, cachedNow) 
             return;
         }
         if (numEntries === this.maxLogsAllowed) {
-            logMessage = 'Silently dropping messages/connections for 5 minutes';
+            logMessage = 'log_limit Silently dropping for 5 minutes for IP:';
             sentMessage = '';
         }
     }
