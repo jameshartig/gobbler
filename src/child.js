@@ -17,7 +17,9 @@ var util = require('util'),
     messageOptions = {},
     _RATE_LIMITED_ = 'rate_limited\n',
     _INVALID_PAYLOAD_ = 'invalid_payload\n',
-    arraySocketErrResponse = new Array(2);
+    arraySocketErrResponse = new Array(2),
+    heapdump;
+
 arraySocketErrResponse[1] = '\n';
 
 function Child(oldChild) {
@@ -467,6 +469,9 @@ Child.prototype.setConfig = function(config) {
     if (config.clientLogLevel !== undefined) {
         this.setClientLogLevel(config.clientLogLevel);
     }
+    if (config.heapdump === true && heapdump === undefined) {
+        heapdump = require('heapdump');
+    }
 };
 Child.prototype.handleParentMessage = function(message, handle) {
     var config;
@@ -490,9 +495,19 @@ Child.prototype.handleParentMessage = function(message, handle) {
                 this.setConfig(config);
                 process.send('fok');
             } catch (e) {
-                process.send('f' + e.message);
+                process.send('h' + e.message);
             }
             break;
+        case 'h': //heapdump
+            if (heapdump === undefined) {
+                process.send('h' + 'heapdump not enabled in settings');
+            } else {
+                heapdump.writeSnapshot(function(err, filename) {
+                    process.send('h' + 'dump written to ' + filename);
+                });
+            }
+            break;
+
     }
 };
 

@@ -20,6 +20,9 @@
     "ringbufferjs": "~0",
     "ws": "^0.7.0"
   },
+  "devDependencies": {
+    "heapdump": "*"
+  },
   "keywords": [
     "gobbler",
     "server",

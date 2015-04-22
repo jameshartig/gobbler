@@ -111,11 +111,14 @@ Parent.prototype.spawnChild = function(responseSocket) {
     }
 };
 Parent.prototype.setupChildListeners = function(child) {
-    child.removeAllListeners('message').on('message', this.onChildMessage.bind(this, child, process.stdout, null));
+    function writeToLog(message) {
+        log(message);
+    }
+    child.removeAllListeners('message').on('message', this.onChildMessage.bind(this, child, writeToLog, null));
     child.removeAllListeners('disconnect').on('disconnect', this.onChildDisconnect.bind(this, child));
     child.removeAllListeners('exit').on('exit', this.onChildDisconnect.bind(this, child));
 };
-Parent.prototype.onChildMessage = function(child, responseSocket, waitingMessage, message) {
+Parent.prototype.onChildMessage = function(child, onResponse, waitingMessage, message) {
     var id = child._id,
         status, response;
     if (waitingMessage != null && message[0] !== waitingMessage) {
@@ -153,17 +156,14 @@ Parent.prototype.onChildMessage = function(child, responseSocket, waitingMessage
                 response = 'Child ' + id + ' failed to reload config: ' + status;
             }
             break;
+        case 'h': //response from heapdump
+            response = message.substr(1);
+            break;
     }
     if (!response) {
         return;
     }
-    responseSocket.write(dateFormat(new Date(), "[d-mmm-yy HH:MM:ss] ") + response + "\n");
-    if (responseSocket._pendingResponses !== undefined) {
-        responseSocket._pendingResponses--;
-        if (responseSocket._pendingResponses === 0) {
-            responseSocket._onLastPendingResponse();
-        }
-    }
+    onResponse(response);
 };
 Parent.prototype.onChildDisconnect = function(child) {
     var id = child._id;
@@ -183,12 +183,23 @@ Parent.prototype.onChildDisconnect = function(child) {
 Parent.prototype.eachChild = function(cb, responseSocket, waitingMessage) {
     var pendingListeners = [],
         listener, child;
+    function writeToSocket(message) {
+        responseSocket.write(message + '\n');
+        responseSocket._pendingResponses--;
+        if (responseSocket._pendingResponses === 0) {
+            responseSocket.end();
+        }
+    }
     for (var id in this.childrenByID) {
         if (!this.childrenByID.hasOwnProperty(id)) continue;
         child = this.childrenByID[id];
         if (responseSocket) {
+            //we need to store the number on _pendingResponses since there might be multiple calls to eachChild for a socket
+            if (responseSocket._pendingResponses === undefined) {
+                responseSocket._pendingResponses = 0;
+            }
             responseSocket._pendingResponses++;
-            listener = [child, 'message', this.onChildMessage.bind(this, child, responseSocket, waitingMessage)];
+            listener = [child, 'message', this.onChildMessage.bind(this, child, writeToSocket, waitingMessage)];
             pendingListeners.push(listener);
             Function.prototype.call.apply(child.on, listener);
         }
@@ -229,11 +240,6 @@ Parent.prototype.dispatchConfig = function(responseSocket) {
 };
 
 Parent.prototype.onControlCommand = function(command, commandArgs, socket) {
-    //todo: we should use deferreds and chainloading instead of this
-    socket._pendingResponses = 0;
-    socket._onLastPendingResponse = function() {
-        socket.end();
-    };
     switch (command) {
         case 'reload':
             this.reloadChildren(socket);
@@ -255,6 +261,11 @@ Parent.prototype.onControlCommand = function(command, commandArgs, socket) {
             }
             socket.write('Number of children: ' + (Object.keys(this.childrenByID)).length + "\n");
             this.getChildrenConnectionCount(socket);
+            break;
+        case 'heapdump':
+            this.eachChild(function(child) {
+                child.send('h');
+            }, socket, 'h');
             break;
         case 'shutdown':
         case 'exit':
