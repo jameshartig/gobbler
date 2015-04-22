@@ -96,7 +96,7 @@ Parent.prototype.spawnChild = function(responseSocket) {
         childFilename = path.resolve(path.dirname(process.mainModule.filename), './startChild.js'),
         child;
     if (EntryPool.cleanupEntries(this.crashedTimes, (now - 5000)) >= this.crashedTimes.length) {
-        log('Children are crashing too quickly. Dying...');
+        log('server_error Children are crashing too quickly. Dying...');
         process.exit();
         return;
     }
@@ -111,8 +111,12 @@ Parent.prototype.spawnChild = function(responseSocket) {
     }
 };
 Parent.prototype.setupChildListeners = function(child) {
-    function writeToLog(message) {
-        log(message);
+    function writeToLog(message, tag) {
+        if (tag) {
+            log(tag, message);
+        } else {
+            log(message);
+        }
     }
     child.removeAllListeners('message').on('message', this.onChildMessage.bind(this, child, writeToLog, null));
     child.removeAllListeners('disconnect').on('disconnect', this.onChildDisconnect.bind(this, child));
@@ -120,7 +124,7 @@ Parent.prototype.setupChildListeners = function(child) {
 };
 Parent.prototype.onChildMessage = function(child, onResponse, waitingMessage, message) {
     var id = child._id,
-        status, response;
+        status, response, tag;
     if (waitingMessage != null && message[0] !== waitingMessage) {
         return;
     }
@@ -133,13 +137,16 @@ Parent.prototype.onChildMessage = function(child, onResponse, waitingMessage, me
             break;
         case 'b': //server has started listening
             response = 'Child ' + id + ' is now listening!';
+            tag = 'child_started';
             break;
         case 'c': //status of reload
             status = message.substr(1);
             if (status === 'ok') {
                 response = 'Child ' + id + ' has been reloaded!';
+                tag = 'child_reloaded';
             } else {
                 response = 'Child ' + id + ' failed to reload. Error: ' + status;
+                tag = 'child_error';
             }
             break;
         case 'd': //child shutdown
@@ -152,8 +159,10 @@ Parent.prototype.onChildMessage = function(child, onResponse, waitingMessage, me
             status = message.substr(1);
             if (status === 'ok') {
                 response = 'Child ' + id + ' reloaded config!';
+                tag = 'child_reloaded';
             } else {
                 response = 'Child ' + id + ' failed to reload config: ' + status;
+                tag = 'child_error';
             }
             break;
         case 'h': //response from heapdump
@@ -163,14 +172,14 @@ Parent.prototype.onChildMessage = function(child, onResponse, waitingMessage, me
     if (!response) {
         return;
     }
-    onResponse(response);
+    onResponse(response, tag);
 };
 Parent.prototype.onChildDisconnect = function(child) {
     var id = child._id;
     child.removeAllListeners();
 
     if (this.childrenByID[id]) {
-        log('Child ' + id + ' disconnected. Restarting...');
+        log('child_disconnect Child ' + id + ' disconnected. Restarting...');
         delete this.childrenByID[id];
         try {
             child.kill();
@@ -309,7 +318,7 @@ Parent.prototype.start = function() {
         }
         log(controlSocket + ' exists. Checking to see if instance is running');
         var conn = net.createConnection({path: controlSocket}, function() {
-            log("An instance of gobbler is already running!\n");
+            log("server_error An instance of gobbler is already running!\n");
             conn.end();
             process.exit();
         });
@@ -333,11 +342,11 @@ Parent.prototype.startControlServer = function() {
 Parent.prototype.startPotluckServer = function() {
     this.potluckHandle = net._createServerHandle(this.config.ip, this.config.port, 4);
     if (!(this.potluckHandle instanceof process.binding('tcp_wrap').TCP)) {
-        log('Created invalid server handle! Maybe you can\'t listen on that port?');
+        log('server_error Created invalid server handle! Maybe you can\'t listen on that port?');
         process.exit();
         return;
     }
-    log('Started potluck server on ' + this.config.ip + ':' + this.config.port);
+    log('server_started Started potluck server on ' + this.config.ip + ':' + this.config.port);
     //now actually start the initial children
     this.restartChildren();
 };
