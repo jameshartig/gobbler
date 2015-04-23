@@ -99,15 +99,16 @@ Child.prototype.createPool = function(initialSize) {
     if ((!size || size < 1) && this.config != null) {
         size = this.config.limits.initialPoolSize;
     }
-    this.pool = new EntryPool(Math.max(10, size), arraySize);
+    size = Math.max(10, size);
+    this.pool = new EntryPool(size, arraySize, size);
     this.startGCInterval();
 };
 Child.prototype.startGCInterval = function() {
     if (this.gc) {
         clearInterval(this.gc);
     }
-    //loop and garbage collect old message counts
-    this.gc = setInterval(this.runGC.bind(this), 60 * 1000);
+    //loop and garbage collect old message counts every 5 minutes
+    this.gc = setInterval(this.runGC.bind(this), 300 * 1000);
 };
 
 Child.prototype.checkDisablePool = function() {
@@ -341,7 +342,8 @@ Child.prototype.onClientError = function(error, socket) {
 Child.prototype.runGC = function() {
     var now = Date.now(),
         cleanupIfBefore = now - this.maxMessagesTimeframe,
-        ip;
+        trimSize = 0,
+        ip, sizeBefore;
     for (ip in this.messagesPerIP) {
         if (EntryPool.cleanupEntries(this.messagesPerIP[ip], cleanupIfBefore) === 0) {
             if (this.pool !== null) {
@@ -366,6 +368,17 @@ Child.prototype.runGC = function() {
                 this.pool.put(this.connectionsPerIP[ip]);
             }
             delete this.connectionsPerIP[ip];
+        }
+    }
+    if (this.pool !== null) {
+        sizeBefore = this.pool.size;
+        trimSize = Math.ceil(sizeBefore / 2);
+        if (this.config != null && this.config.limits.initialPoolSize > trimSize) {
+            trimSize = this.config.limits.initialPoolSize;
+        }
+        this.pool.trim(trimSize);
+        if (sizeBefore !== this.pool.size) {
+            log('Trimmed entrypool size to', this.pool.size);
         }
     }
 };
@@ -507,7 +520,13 @@ Child.prototype.handleParentMessage = function(message, handle) {
                 });
             }
             break;
-
+        case 'p': //entry pool size
+            if (this.pool == null) {
+                process.send('p0');
+            } else {
+                process.send('p' + this.pool.size);
+            }
+            break;
     }
 };
 

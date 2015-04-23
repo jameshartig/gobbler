@@ -168,6 +168,9 @@ Parent.prototype.onChildMessage = function(child, onResponse, waitingMessage, me
         case 'h': //response from heapdump
             response = message.substr(1);
             break;
+        case 'p': //entry pool size
+            response = 'Child ' + id + ' pool size: ' + message.substr(1);
+            break;
     }
     if (!response) {
         return;
@@ -275,6 +278,11 @@ Parent.prototype.onControlCommand = function(command, commandArgs, socket) {
             this.eachChild(function(child) {
                 child.send('h');
             }, socket, 'h');
+            break;
+        case 'entrypoolsize':
+            this.eachChild(function(child) {
+                child.send('p');
+            }, socket, 'p');
             break;
         case 'shutdown':
         case 'exit':
