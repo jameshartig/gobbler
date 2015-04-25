@@ -8,23 +8,11 @@ var net = require('net'),
     dateFormat = require('dateformat'),
     log = require('./log.js'),
     ctrl = require('daemonctrl'),
+    ChainLoading = require('chainloading'),
     reload = require('require-reload')(require),
     numCPUs = require('os').cpus().length,
     isWindows = /^win/.test(process.platform),
     WriterHandler = reload('./writerHandler.js');
-
-function cleanupListeners(pendingListeners, inMS) {
-    if (!pendingListeners || !pendingListeners.length) {
-        return;
-    }
-    var timeout = inMS !== undefined ? inMS : 5000;
-    //remove the listeners if they happen to not have fired
-    setTimeout(function() {
-        pendingListeners.forEach(function(listener) {
-            Function.prototype.call.apply(listener[0].removeListener, listener);
-        });
-    }, timeout);
-}
 
 function Parent() {
     WriterHandler.call(this);
@@ -32,6 +20,7 @@ function Parent() {
     this.isParent = true;
     this.isChild = false;
     this.childrenByID = {};
+    this.nextResponseID = 1;
 }
 util.inherits(Parent, WriterHandler);
 Parent.prototype.call = function(context) {
@@ -91,24 +80,37 @@ Parent.prototype.loadConfig = function() {
     }
 };
 
-Parent.prototype.spawnChild = function(responseSocket) {
+Parent.prototype.spawnChild = function(responseSocket, num) {
     var now = Date.now(),
         childFilename = path.resolve(path.dirname(process.mainModule.filename), './startChild.js'),
-        child;
+        pid, child, onMessage;
+    //todo: don't always record this
     if (EntryPool.cleanupEntries(this.crashedTimes, (now - 5000)) >= this.crashedTimes.length) {
         log('server_error Children are crashing too quickly. Dying...');
         process.exit();
-        return;
+        return new Promise(function(resolve, reject) {reject();});
     }
     child = child_process.fork(childFilename);
     child_process.exitWithParent(child);
-    this.childrenByID[child.pid] = child;
-    child._id = child.pid;
+    pid = child.pid;
+    this.childrenByID[pid] = child;
+    child._id = pid;
+    child._num = num;
     this.setupChildListeners(child);
 
-    if (responseSocket) {
-        this.eachChild(null, responseSocket, 'b');
-    }
+    return new Promise(function(resolve) {
+        onMessage = function(message, child, response) {
+            if (message[0] !== 'b' || child.pid !== pid) {
+                return;
+            }
+            this.removeListener('childMessage', onMessage);
+            if (responseSocket) {
+                responseSocket.write(response + '\n');
+            }
+            resolve();
+        }.bind(this);
+        this.addListener('childMessage', onMessage);
+    }.bind(this));
 };
 Parent.prototype.setupChildListeners = function(child) {
     function writeToLog(message, tag) {
@@ -118,14 +120,14 @@ Parent.prototype.setupChildListeners = function(child) {
             log(message);
         }
     }
-    child.removeAllListeners('message').on('message', this.onChildMessage.bind(this, child, writeToLog, null));
+    child.removeAllListeners('message').on('message', this.onChildMessage.bind(this, child, writeToLog));
     child.removeAllListeners('disconnect').on('disconnect', this.onChildDisconnect.bind(this, child));
     child.removeAllListeners('exit').on('exit', this.onChildDisconnect.bind(this, child));
 };
-Parent.prototype.onChildMessage = function(child, onResponse, waitingMessage, message) {
+Parent.prototype.onChildMessage = function(child, onResponse, message) {
     var id = child._id,
-        status, response, tag;
-    if (waitingMessage != null && message[0] !== waitingMessage) {
+        status, response, tag, parts;
+    if (!message) {
         return;
     }
     switch (message[0]) {
@@ -151,9 +153,7 @@ Parent.prototype.onChildMessage = function(child, onResponse, waitingMessage, me
             break;
         case 'd': //child shutdown
             response = 'Child ' + id + ' has been stopped!';
-            break;
-        case 'e': //connection count
-            response = 'Child ' + id + ' connection count: ' + message.substr(1);
+            tag = 'child_stopped';
             break;
         case 'f': //response from new config
             status = message.substr(1);
@@ -165,16 +165,20 @@ Parent.prototype.onChildMessage = function(child, onResponse, waitingMessage, me
                 tag = 'child_error';
             }
             break;
-        case 'h': //response from heapdump
-            response = message.substr(1);
-            break;
-        case 'p': //entry pool size
-            response = 'Child ' + id + ' pool size: ' + message.substr(1);
+        case 'r': //response to request
+            parts = message.substr(1).split('|');
+            if (!parts[0]) {
+                log('Invalid response to child request:', message);
+                return;
+            }
+            //if there were any pipe chars in the rest of the response, put them back
+            this.emit('response:' + parts[0], parts.slice(1).join('|'), child);
             break;
     }
     if (!response) {
         return;
     }
+    this.emit('childMessage', message, child, response);
     onResponse(response, tag);
 };
 Parent.prototype.onChildDisconnect = function(child) {
@@ -183,86 +187,184 @@ Parent.prototype.onChildDisconnect = function(child) {
 
     if (this.childrenByID[id]) {
         log('child_disconnect Child ' + id + ' disconnected. Restarting...');
+        //todo: emit here and fake a message so anything waiting for this child stops
         delete this.childrenByID[id];
         try {
             child.kill();
         } catch (e) {}
         EntryPool.addEntry(this.crashedTimes, Date.now());
-        this.spawnChild();
+        this.spawnChild(null, child._num);
     }
 };
-//waitingMessage is the char of the message you're waiting for
-Parent.prototype.eachChild = function(cb, responseSocket, waitingMessage) {
-    var pendingListeners = [],
-        listener, child;
-    function writeToSocket(message) {
-        responseSocket.write(message + '\n');
-        responseSocket._pendingResponses--;
-        if (responseSocket._pendingResponses === 0) {
-            responseSocket.end();
-        }
+
+Parent.prototype.getNextResponseID = function() {
+    var id = this.nextResponseID;
+    this.nextResponseID++;
+    if (this.nextResponseID >= 1024) {
+        this.nextResponseID = 1;
     }
-    for (var id in this.childrenByID) {
-        if (!this.childrenByID.hasOwnProperty(id)) continue;
-        child = this.childrenByID[id];
-        if (responseSocket) {
-            //we need to store the number on _pendingResponses since there might be multiple calls to eachChild for a socket
-            if (responseSocket._pendingResponses === undefined) {
-                responseSocket._pendingResponses = 0;
+    this.removeAllListeners('response:' + id);
+    return id;
+};
+Parent.prototype.eachChild = function(cb, responseCallback) {
+    return new Promise(function(resolve) {
+        var pendingChildren = [],
+            responseID = this.getNextResponseID(),
+            child, onResponse;
+
+        onResponse = function(message, child) {
+            var i = pendingChildren.indexOf(child._id);
+            if (i !== -1) {
+                pendingChildren.splice(i, 1);
             }
-            responseSocket._pendingResponses++;
-            listener = [child, 'message', this.onChildMessage.bind(this, child, writeToSocket, waitingMessage)];
-            pendingListeners.push(listener);
-            Function.prototype.call.apply(child.on, listener);
+            if (message && responseCallback) {
+                responseCallback(message, child);
+            }
+            if (pendingChildren.length === 0) {
+                this.removeAllListeners('response:' + responseID);
+                resolve();
+            }
+        }.bind(this);
+        this.addListener('response:' + responseID, onResponse);
+
+        for (var id in this.childrenByID) {
+            if (!this.childrenByID.hasOwnProperty(id)) continue;
+            child = this.childrenByID[id];
+            pendingChildren.push(child._id);
+            if (typeof cb === 'function') {
+                cb(child, responseID);
+            }
         }
-        if (typeof cb === 'function') {
-            cb(child);
-        }
-    }
-    cleanupListeners(pendingListeners);
+    }.bind(this));
 };
 Parent.prototype.stopChildren = function(responseSocket) {
-    var _this = this;
-    this.eachChild(function(child) {
-        delete _this.childrenByID[child._id];
-        child.kill();
-    }, responseSocket, 'd');
+    return new Promise(function(resolve) {
+        var pendingChildren = [],
+            onMessage;
+        onMessage = function(message, child, response) {
+            if (message[0] !== 'd') {
+                return;
+            }
+            var i = pendingChildren.indexOf(child._id);
+            if (i !== -1) {
+                pendingChildren.splice(i, 1);
+            }
+            if (responseSocket) {
+                responseSocket.write(response + '\n');
+            }
+            if (pendingChildren.length === 0) {
+                this.removeListener('childMessage', onMessage);
+                resolve();
+            }
+        }.bind(this);
+        this.addListener('childMessage', onMessage);
+
+        this.eachChild(function(child) {
+            pendingChildren.push(child._id);
+            //delete first here so we don't try to make a new one when it dies
+            delete this.childrenByID[child._id];
+            child.kill();
+        }.bind(this));
+
+    }.bind(this));
 };
 Parent.prototype.restartChildren = function(responseSocket) {
-    this.stopChildren(responseSocket);
+    var chain = new ChainLoading();
+    chain.push(this.stopChildren(responseSocket));
     for (var i = 0; i < this.config.children; i++) {
-        this.spawnChild(responseSocket);
+        chain.push(this.spawnChild(responseSocket, i));
     }
+    return chain.promise();
 };
 Parent.prototype.reloadChildren = function(responseSocket) {
-    this.eachChild(function(child) {
-        child.kill('SIGHUP');
-    }, responseSocket, 'c');
-};
-Parent.prototype.getChildrenConnectionCount = function(responseSocket) {
-    this.eachChild(function(child) {
-        child.send('e');
-    }, responseSocket, 'e');
+    return new Promise(function(resolve) {
+        var pendingChildren = [],
+            onMessage;
+        onMessage = function(message, child, response) {
+            if (message[0] !== 'c') {
+                return;
+            }
+            var i = pendingChildren.indexOf(child._id);
+            if (i !== -1) {
+                pendingChildren.splice(i, 1);
+            }
+            if (responseSocket) {
+                responseSocket.write(response + '\n');
+            }
+            if (pendingChildren.length === 0) {
+                this.removeListener('childMessage', onMessage);
+                resolve();
+            }
+        }.bind(this);
+        this.addListener('childMessage', onMessage);
+
+        this.eachChild(function(child) {
+            pendingChildren.push(child._id);
+            child.kill('SIGHUP');
+        }.bind(this));
+
+    }.bind(this));
 };
 Parent.prototype.dispatchConfig = function(responseSocket) {
-    var message = 'f' + JSON.stringify(this.config);
-    this.eachChild(function(child) {
-        child.send(message);
-    }, responseSocket, 'f');
+    return new Promise(function(resolve) {
+        var command = 'f' + JSON.stringify(this.config),
+            pendingChildren = [],
+            onMessage;
+        onMessage = function(message, child, response) {
+            if (message[0] !== 'f') {
+                return;
+            }
+            var i = pendingChildren.indexOf(child._id);
+            if (i !== -1) {
+                pendingChildren.splice(i, 1);
+            }
+            if (responseSocket) {
+                responseSocket.write(response + '\n');
+            }
+            if (pendingChildren.length === 0) {
+                this.removeListener('childMessage', onMessage);
+                resolve();
+            }
+        }.bind(this);
+        this.addListener('childMessage', onMessage);
+
+        this.eachChild(function(child) {
+            pendingChildren.push(child._id);
+            child.send(command);
+        }.bind(this));
+
+    }.bind(this));
+};
+Parent.prototype.getChildrenConnectionCount = function(responseSocket, raw) {
+    return this.eachChild(function(child, respID) {
+        child.send('r' + respID + '|connCount');
+    }, function(message, child) {
+        if (raw) {
+            responseSocket.write('child' + child._num + ': ' + message + '\n');
+        } else {
+            responseSocket.write('Child ' + child._id + ' connection count: ' + message + '\n');
+        }
+    });
 };
 
 Parent.prototype.onControlCommand = function(command, commandArgs, socket) {
-    switch (command) {
+    if (!command) {
+        return;
+    }
+    function endSocket() {
+        socket.end();
+    }
+    switch (command.toLowerCase()) {
         case 'reload':
-            this.reloadChildren(socket);
+            this.reloadChildren(socket).then(endSocket, endSocket);
             break;
         case 'restart':
-            this.restartChildren(socket);
+            this.restartChildren(socket).then(endSocket, endSocket);
             break;
         case 'reloadconfig':
             try {
                 this.loadConfig();
-                this.dispatchConfig(socket);
+                this.dispatchConfig(socket).then(endSocket, endSocket);
             } catch (e) {
                 socket.end('Failed to load new config: ' + e.message);
             }
@@ -272,25 +374,32 @@ Parent.prototype.onControlCommand = function(command, commandArgs, socket) {
                 socket.write('Role: ' + this.role + "\n");
             }
             socket.write('Number of children: ' + (Object.keys(this.childrenByID)).length + "\n");
-            this.getChildrenConnectionCount(socket);
+            this.getChildrenConnectionCount(socket).then(endSocket, endSocket);
             break;
         case 'heapdump':
-            this.eachChild(function(child) {
-                child.send('h');
-            }, socket, 'h');
+            this.eachChild(function(child, respID) {
+                child.send('r' + respID + '|heapDump');
+            }, function(message, child) {
+                socket.write('Child ' + child._id + ' ' + message + '\n');
+            }).then(endSocket, endSocket);
+            break;
+        case 'connectioncount':
+            this.getChildrenConnectionCount(socket, true).then(endSocket, endSocket);
             break;
         case 'entrypoolsize':
-            this.eachChild(function(child) {
-                child.send('p');
-            }, socket, 'p');
+            this.eachChild(function(child, respID) {
+                child.send('r' + respID + '|entryPoolSize');
+            }, function(message, child) {
+                socket.write('child' + child._num + ': ' + message + '\n');
+            }).then(endSocket, endSocket);
             break;
         case 'shutdown':
         case 'exit':
             socket.write("Shutting down server...\n");
-            this.stopChildren();
-            process.nextTick(function() {
+            this.stopChildren().then(function() {
+                endSocket();
                 process.exit();
-            });
+            }, endSocket);
             break;
         default:
             socket.end('Invalid command "' + command + '"');

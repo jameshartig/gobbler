@@ -343,7 +343,7 @@ Child.prototype.runGC = function() {
     var now = Date.now(),
         cleanupIfBefore = now - this.maxMessagesTimeframe,
         trimSize = 0,
-        ip, sizeBefore;
+        ip;
     for (ip in this.messagesPerIP) {
         if (EntryPool.cleanupEntries(this.messagesPerIP[ip], cleanupIfBefore) === 0) {
             if (this.pool !== null) {
@@ -371,15 +371,11 @@ Child.prototype.runGC = function() {
         }
     }
     if (this.pool !== null) {
-        sizeBefore = this.pool.size;
-        trimSize = Math.ceil(sizeBefore / 2);
+        trimSize = Math.ceil(this.pool.size / 2);
         if (this.config != null && this.config.limits.initialPoolSize > trimSize) {
             trimSize = this.config.limits.initialPoolSize;
         }
         this.pool.trim(trimSize);
-        if (sizeBefore !== this.pool.size) {
-            log('Trimmed entrypool size to', this.pool.size);
-        }
     }
 };
 Child.prototype.onServerError = function(error) {
@@ -414,19 +410,6 @@ Child.prototype.onServerHandle = function(handle) {
     server.listening = true;
     server.listen(handle, function() {
         process.send('b');
-    });
-};
-Child.prototype.reportConnectionCount = function() {
-    if (!this.server || !this.server.listening) {
-        process.send('e' + 0);
-        return;
-    }
-    this.server.getConnections(function(err, count) {
-        if (err) {
-            process.send('e' + err.message);
-            return;
-        }
-        process.send('e' + count);
     });
 };
 Child.prototype.setConfig = function(config) {
@@ -497,9 +480,6 @@ Child.prototype.handleParentMessage = function(message, handle) {
             this.onServerHandle(handle);
             this.start();
             break;
-        case 'e': //asking for our connection count
-            this.reportConnectionCount();
-            break;
         case 'f': //new config!
             try {
                 config = message.substr(1);
@@ -511,20 +491,52 @@ Child.prototype.handleParentMessage = function(message, handle) {
                 process.send('h' + e.message);
             }
             break;
-        case 'h': //heapdump
+        case 'r':
+            this.handleParentRequest(message.substr(1));
+            break;
+    }
+};
+
+function respondToParentRequest(responseID, message) {
+    process.send('r' + responseID + '|' + message);
+}
+
+Child.prototype.handleParentRequest = function(message) {
+    var parts = message.split('|'),
+        id = parts[0];
+    if (!id || parts.length < 2) {
+        log('Invalid parent request received', message);
+        return;
+    }
+    switch (parts[1]) {
+        case 'heapDump':
             if (heapdump === undefined) {
-                process.send('h' + 'heapdump not enabled in settings');
+                respondToParentRequest(id, 'heapdump not enabled in settings');
             } else {
                 heapdump.writeSnapshot(function(err, filename) {
-                    process.send('h' + 'dump written to ' + filename);
+                    respondToParentRequest(id, 'dump written to ' + filename);
                 });
             }
             break;
-        case 'p': //entry pool size
+        case 'connCount':
+            if (!this.server || !this.server.listening) {
+                respondToParentRequest(id, 0);
+                return;
+            }
+            this.server.getConnections(function(err, count) {
+                if (err) {
+                    log('Failed to get connection count', err);
+                    respondToParentRequest(id, 0);
+                    return;
+                }
+                respondToParentRequest(id, count);
+            });
+            break;
+        case 'entryPoolSize':
             if (this.pool == null) {
-                process.send('p0');
+                respondToParentRequest(id, 0);
             } else {
-                process.send('p' + this.pool.size);
+                respondToParentRequest(id, this.pool.size);
             }
             break;
     }

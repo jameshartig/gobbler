@@ -8,6 +8,7 @@
     "url": "git://github.com/fastest963/gobbler.git"
   },
   "dependencies": {
+    "chainloading": "^1.1.0",
     "child-process-debug": "~0.0.6",
     "crc32": "0.2.2",
     "daemonctrl": "~0.0.5",
