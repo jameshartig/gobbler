@@ -11,7 +11,8 @@
   "limits": {
     "persistentConns": 10,
     "messages": 100,
-    "messagesTimeframe": 60
+    "messagesTimeframe": 60,
+    "logs": 25
   },
   "clientLogLevel": 0,
   "portluck": {
